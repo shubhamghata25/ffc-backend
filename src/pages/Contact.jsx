@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useToast, ToastContainer } from '../hooks/useToast.js'
+import { useToast, ToastContainer } from '../hooks/useToast.jsx'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:4000'
 

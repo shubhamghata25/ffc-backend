@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { openRazorpay } from '../hooks/useRazorpay.js'
-import { useToast, ToastContainer } from '../hooks/useToast.js'
+import { openRazorpay } from '../hooks/useRazorpay.jsx'
+import { useToast, ToastContainer } from '../hooks/useToast.jsx'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:4000'
 const PH  = 'https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=400'

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { openRazorpay } from '../hooks/useRazorpay.js'
-import { useToast, ToastContainer } from '../hooks/useToast.js'
+import { openRazorpay } from '../hooks/useRazorpay.jsx'
+import { useToast, ToastContainer } from '../hooks/useToast.jsx'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:4000'
 
