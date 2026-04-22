@@ -1,0 +1,344 @@
+{
+  "members": [
+    {
+      "id": "m1",
+      "name": "Rahul Sharma",
+      "phone": "9876543210",
+      "plan": "Monthly – ₹1199",
+      "joined": "2026-01-15",
+      "status": "Active",
+      "fee": "Paid"
+    },
+    {
+      "id": "m2",
+      "name": "Priya Yadav",
+      "phone": "9812345670",
+      "plan": "Half Yearly – ₹4999",
+      "joined": "2025-10-01",
+      "status": "Active",
+      "fee": "Paid"
+    },
+    {
+      "id": "m3",
+      "name": "Amit Kulkarni",
+      "phone": "9988776655",
+      "plan": "Quarterly – ₹2999",
+      "joined": "2026-02-20",
+      "status": "Inactive",
+      "fee": "Unpaid"
+    }
+  ],
+  "leads": [
+    {
+      "id": "l1",
+      "name": "Mohit Raut",
+      "email": "mohit@mail.com",
+      "phone": "9911223344",
+      "message": "Interested in monthly plan",
+      "date": "2026-04-05"
+    },
+    {
+      "id": "l2",
+      "name": "Divya Singh",
+      "email": "divya@mail.com",
+      "phone": "9933445566",
+      "message": "Want personal training",
+      "date": "2026-04-06"
+    }
+  ],
+  "offers": [
+    {
+      "id": "o1",
+      "status": "OFF",
+      "title": "Summer Flash Sale 💥",
+      "description": "Get 20% off on all plans!",
+      "btn": "Grab Now",
+      "link": "/pricing",
+      "poster": ""
+    }
+  ],
+  "trainers": [
+    {
+      "id": "t1",
+      "name": "Nagendra Singh",
+      "role": "Head Trainer",
+      "exp": "8+ Years",
+      "spec": "Strength & Fat Loss",
+      "status": "Active",
+      "photo": ""
+    },
+    {
+      "id": "t2",
+      "name": "Depankar Bera",
+      "role": "Fitness Coach",
+      "exp": "5+ Years",
+      "spec": "Weight Loss & Nutrition",
+      "status": "Active",
+      "photo": ""
+    }
+  ],
+  "membershipPlans": [
+    {
+      "id": "plan1",
+      "label": "Monthly",
+      "period": "month",
+      "price": 1199,
+      "originalPrice": 1199,
+      "discount": 0,
+      "discountType": "percent",
+      "popular": false,
+      "active": true,
+      "features": [
+        "Full gym access",
+        "Locker facility",
+        "Diet consultation",
+        "Group classes"
+      ],
+      "description": "Perfect for trying out our gym.",
+      "order": 1
+    },
+    {
+      "id": "plan2",
+      "label": "Quarterly",
+      "period": "3 months",
+      "price": 2999,
+      "originalPrice": 2999,
+      "discount": 0,
+      "discountType": "percent",
+      "popular": true,
+      "active": true,
+      "features": [
+        "Full gym access",
+        "Locker facility",
+        "Diet consultation",
+        "Group classes",
+        "1 Personal session"
+      ],
+      "description": "Best value for short-term goals.",
+      "order": 2
+    },
+    {
+      "id": "plan3",
+      "label": "Half Yearly",
+      "period": "6 months",
+      "price": 4999,
+      "originalPrice": 4999,
+      "discount": 0,
+      "discountType": "percent",
+      "popular": false,
+      "active": true,
+      "features": [
+        "Full gym access",
+        "Locker facility",
+        "Diet consultation",
+        "Group classes",
+        "2 Personal sessions",
+        "Body analysis"
+      ],
+      "description": "Commit to 6 months and transform.",
+      "order": 3
+    },
+    {
+      "id": "plan4",
+      "label": "Yearly",
+      "period": "year",
+      "price": 9999,
+      "originalPrice": 9999,
+      "discount": 0,
+      "discountType": "percent",
+      "popular": false,
+      "active": true,
+      "features": [
+        "Full gym access",
+        "Locker facility",
+        "Diet consultation",
+        "Group classes",
+        "5 Personal sessions",
+        "Body analysis",
+        "Priority support"
+      ],
+      "description": "Best value for serious athletes.",
+      "order": 4
+    }
+  ],
+  "storeCategories": [
+    {
+      "id": "cat1",
+      "name": "Supplements",
+      "image": "",
+      "order": 1
+    },
+    {
+      "id": "cat2",
+      "name": "Gym Equipment",
+      "image": "",
+      "order": 2
+    },
+    {
+      "id": "cat3",
+      "name": "Extra",
+      "image": "",
+      "order": 3
+    }
+  ],
+  "storeSubcategories": [
+    {
+      "id": "sub1",
+      "categoryId": "cat1",
+      "name": "Protein",
+      "image": "",
+      "order": 1
+    },
+    {
+      "id": "sub2",
+      "categoryId": "cat1",
+      "name": "Vitamins",
+      "image": "",
+      "order": 2
+    },
+    {
+      "id": "sub3",
+      "categoryId": "cat1",
+      "name": "Creatine",
+      "image": "",
+      "order": 3
+    },
+    {
+      "id": "sub4",
+      "categoryId": "cat2",
+      "name": "Dumbbells",
+      "image": "",
+      "order": 1
+    },
+    {
+      "id": "sub5",
+      "categoryId": "cat2",
+      "name": "Resistance",
+      "image": "",
+      "order": 2
+    },
+    {
+      "id": "sub6",
+      "categoryId": "cat3",
+      "name": "Accessories",
+      "image": "",
+      "order": 1
+    },
+    {
+      "id": "sub7",
+      "categoryId": "cat3",
+      "name": "Apparel",
+      "image": "",
+      "order": 2
+    }
+  ],
+  "storeProducts": [
+    {
+      "id": "p1",
+      "subcategoryId": "sub1",
+      "categoryId": "cat1",
+      "name": "Whey Protein 1kg",
+      "description": "Premium whey protein for muscle recovery.",
+      "price": 1599,
+      "image": "",
+      "inStock": true
+    },
+    {
+      "id": "p2",
+      "subcategoryId": "sub3",
+      "categoryId": "cat1",
+      "name": "Creatine 500g",
+      "description": "Pure creatine monohydrate for strength.",
+      "price": 999,
+      "image": "",
+      "inStock": true
+    },
+    {
+      "id": "p3",
+      "subcategoryId": "sub4",
+      "categoryId": "cat2",
+      "name": "Adjustable Dumbbell",
+      "description": "5–25kg adjustable dumbbell set.",
+      "price": 3499,
+      "image": "",
+      "inStock": true
+    },
+    {
+      "id": "p4",
+      "subcategoryId": "sub5",
+      "categoryId": "cat2",
+      "name": "Resistance Band Set",
+      "description": "5-band set for home workouts.",
+      "price": 699,
+      "image": "",
+      "inStock": true
+    },
+    {
+      "id": "p5",
+      "subcategoryId": "sub6",
+      "categoryId": "cat3",
+      "name": "Gym Gloves",
+      "description": "Anti-slip gloves for lifting.",
+      "price": 349,
+      "image": "",
+      "inStock": true
+    }
+  ],
+  "exercises": [
+    {
+      "id": "e1",
+      "name": "Bench Press",
+      "muscle": "Chest",
+      "level": "Intermediate",
+      "description": "Classic chest exercise.",
+      "ytLink": "https://www.youtube.com/watch?v=rT7DgCr-3pg",
+      "image": ""
+    },
+    {
+      "id": "e2",
+      "name": "Squats",
+      "muscle": "Legs",
+      "level": "Beginner",
+      "description": "King of leg exercises.",
+      "ytLink": "https://www.youtube.com/watch?v=aclHkVaku9U",
+      "image": ""
+    },
+    {
+      "id": "e3",
+      "name": "Dumbbell Curl",
+      "muscle": "Biceps",
+      "level": "Advanced",
+      "description": "Isolation for biceps.",
+      "ytLink": "https://www.youtube.com/watch?v=ykJmrZ5v0Oo",
+      "image": ""
+    },
+    {
+      "id": "e4",
+      "name": "Deadlift",
+      "muscle": "Back",
+      "level": "Advanced",
+      "description": "Full-body compound lift.",
+      "ytLink": "https://www.youtube.com/watch?v=op9kVnSso6Q",
+      "image": ""
+    },
+    {
+      "id": "e5",
+      "name": "Pull Ups",
+      "muscle": "Back",
+      "level": "Intermediate",
+      "description": "Upper body pulling.",
+      "ytLink": "https://www.youtube.com/watch?v=eGo4IYlbE5g",
+      "image": ""
+    },
+    {
+      "id": "e6",
+      "name": "Shoulder Press",
+      "muscle": "Shoulders",
+      "level": "Beginner",
+      "description": "Overhead pressing.",
+      "ytLink": "https://www.youtube.com/watch?v=qEwKCR5JCog",
+      "image": ""
+    }
+  ],
+  "orders": []
+}
