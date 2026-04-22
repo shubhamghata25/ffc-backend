@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
   "name": "ffc-backend",
   "version": "1.0.0",
   "type": "module",
@@ -15,5 +16,23 @@
     "express": "^4.19.2",
     "nodemailer": "^6.9.14",
     "razorpay": "^2.9.4"
+=======
+  "name": "friends-fitness-club",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+>>>>>>> 63fca3630376710afddfab46fdc5d06cf4432c74
   }
 }

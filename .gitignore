@@ -1,2 +1,8 @@
 node_modules/
+<<<<<<< HEAD
 .env
+=======
+dist/
+.env
+.env.local
+>>>>>>> 63fca3630376710afddfab46fdc5d06cf4432c74
