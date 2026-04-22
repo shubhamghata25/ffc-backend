@@ -23,14 +23,14 @@ async function apiFetch(path, method='GET', body=null) {
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload  = () => resolve(reader.result)   // "data:image/jpeg;base64,..."
+    reader.onload  = () => resolve(reader.result)
     reader.onerror = reject
     reader.readAsDataURL(file)
   })
 }
 
-/* ── Resize image before storing (max 800px, quality 0.75) ── */
-function resizeImage(dataUrl, maxW=800, quality=0.75) {
+/* ── Resize image client-side before uploading (saves bandwidth) ── */
+function resizeImage(dataUrl, maxW=800, quality=0.78) {
   return new Promise(resolve => {
     const img = new Image()
     img.onload = () => {
@@ -43,6 +43,23 @@ function resizeImage(dataUrl, maxW=800, quality=0.75) {
     }
     img.src = dataUrl
   })
+}
+
+/* ── Upload image to Cloudinary via backend ──
+   Returns permanent Cloudinary URL.
+   Falls back gracefully if backend returns base64. */
+async function uploadImageToCloud(base64, folder='ffc') {
+  const res = await fetch(`${API}/api/upload`, {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'x-admin-key': ADMIN_KEY },
+    body: JSON.stringify({ image: base64, folder }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({error:'Upload failed'}))
+    throw new Error(err.error || 'Image upload failed')
+  }
+  const data = await res.json()
+  return data.url  // permanent Cloudinary URL
 }
 
 /* ─── COLOURS ─────────────────────────────────────────────── */
@@ -77,7 +94,7 @@ const CSS = `
 /* ─── SMALL COMPONENTS ────────────────────────────────────── */
 const Btn = ({ children, onClick, variant='primary', size='md', disabled=false, style:s={} }) => {
   const base = { display:'inline-flex',alignItems:'center',gap:6,cursor:disabled?'not-allowed':'pointer',border:'none',borderRadius:30,fontFamily:"'Poppins',sans-serif",fontWeight:600,transition:'all .2s',whiteSpace:'nowrap',opacity:disabled?0.6:1,padding:size==='sm'?'7px 15px':'10px 22px',fontSize:size==='sm'?12:14 }
-  const V = { primary:{background:C.accent,color:'#fff',boxShadow:'0 0 14px rgba(255,60,0,0.35)'}, ghost:{background:'transparent',color:C.accent,border:`1px solid ${C.accent}`}, danger:{background:C.danger,color:'#fff'}, muted:{background:C.border,color:C.text}, success:{background:C.success,color:'#fff'} }
+  const V = { primary:{background:'linear-gradient(135deg,#7c3aed,#9c59f7)',color:'#fff',boxShadow:'0 4px 16px rgba(124,58,237,0.35)'}, ghost:{background:'transparent',color:'#bb86fc',border:'1px solid rgba(124,58,237,0.5)'}, danger:{background:C.danger,color:'#fff'}, muted:{background:'rgba(255,255,255,0.07)',color:C.text}, success:{background:C.success,color:'#fff'} }
   return <button onClick={disabled?undefined:onClick} style={{...base,...V[variant],...s}}>{children}</button>
 }
 
@@ -143,14 +160,24 @@ function ImageUploader({ value, onChange, label='Upload Image', hint='', maxW=80
   const [uploading, setUploading] = useState(false)
   const [drag, setDrag] = useState(false)
 
+  const [uploadError, setUploadError] = useState('')
+
   const processFile = async (file) => {
     if (!file || !file.type.startsWith('image/')) return
+    if (file.size > 10 * 1024 * 1024) { setUploadError('Image must be under 10MB'); return }
     setUploading(true)
+    setUploadError('')
     try {
+      /* 1. Resize locally to reduce upload size */
       const base64 = await fileToBase64(file)
-      const resized = await resizeImage(base64, maxW, aspect==='square' ? 0.8 : 0.75)
-      onChange(resized)
-    } catch (e) { console.error(e) }
+      const resized = await resizeImage(base64, maxW, aspect==='square' ? 0.8 : 0.78)
+      /* 2. Upload to Cloudinary via backend — returns permanent URL */
+      const cloudUrl = await uploadImageToCloud(resized, 'ffc')
+      onChange(cloudUrl)
+    } catch (e) {
+      console.error('Image upload error:', e)
+      setUploadError(e.message || 'Upload failed. Try again.')
+    }
     setUploading(false)
   }
 
@@ -184,13 +211,17 @@ function ImageUploader({ value, onChange, label='Upload Image', hint='', maxW=80
       >
         <input ref={inputRef} type="file" accept="image/*" onChange={e=>processFile(e.target.files[0])}/>
         {uploading
-          ? <><Spinner size={24}/><p style={{color:C.muted,fontSize:13,marginTop:8}}>Processing image…</p></>
+          ? <><Spinner size={24}/><p style={{color:C.muted,fontSize:13,marginTop:8}}>Uploading to cloud…</p></>
           : <>
               <div style={{fontSize:32,marginBottom:8}}>📸</div>
               <p style={{color:C.muted,fontSize:13,marginBottom:4}}>{value ? 'Click or drop to replace' : 'Click or drop image here'}</p>
-              {hint && <p style={{color:'#444',fontSize:12}}>{hint}</p>}
+              {hint && <p style={{color:'#555',fontSize:12}}>{hint}</p>}
             </>
         }
+        {uploadError && <p style={{color:C.danger,fontSize:12,marginTop:6}}>⚠ {uploadError}</p>}
+        {value && value.startsWith('https://res.cloudinary.com') && (
+          <p style={{color:C.success,fontSize:11,marginTop:6}}>✓ Stored permanently on Cloudinary</p>
+        )}
       </div>
     </div>
   )
@@ -203,7 +234,7 @@ function LoginPage({ onLogin }) {
   const [u,setU]=useState(''); const [p,setP]=useState(''); const [err,setErr]=useState(''); const [loading,setLoading]=useState(false)
   const handle = () => { setLoading(true); setErr(''); setTimeout(()=>{ if(u===ADMIN_USER&&p===ADMIN_PASS) onLogin(); else{setErr('Invalid credentials');setLoading(false)} },700) }
   return (
-    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:`radial-gradient(ellipse at 60% 40%,rgba(255,60,0,0.15) 0%,${C.bg} 65%)`}}>
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:`radial-gradient(ellipse at 60% 40%,rgba(124,58,237,0.15) 0%,${C.bg} 65%)`}}>
       <div className="adm-fade" style={{width:380,textAlign:'center'}}>
         <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:52,letterSpacing:4,background:'linear-gradient(135deg,#bb86fc,#7c3aed)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',backgroundClip:'text',animation:'glow 2.5s infinite',marginBottom:4}}>FFC</div>
         <div style={{fontSize:11,color:C.muted,letterSpacing:3,marginBottom:36}}>ADMIN PORTAL</div>
@@ -244,7 +275,7 @@ function Dashboard({ members, products, leads, offers }) {
       <p style={{color:C.muted,fontSize:14,marginBottom:24}}>Welcome back, Admin 👋 — {new Date().toDateString()}</p>
 
       {liveOffer && (
-        <div style={{marginBottom:20,padding:'14px 18px',borderRadius:12,background:'rgba(255,60,0,0.1)',border:`1px solid ${C.accent}`,fontSize:14,display:'flex',alignItems:'center',gap:12}}>
+        <div style={{marginBottom:20,padding:'14px 18px',borderRadius:12,background:'rgba(124,58,237,0.1)',border:`1px solid ${C.accent}`,fontSize:14,display:'flex',alignItems:'center',gap:12}}>
           {liveOffer.poster && <img src={liveOffer.poster} alt="" style={{width:48,height:48,objectFit:'cover',borderRadius:8,flexShrink:0}}/>}
           <div><strong style={{color:C.accent}}>🔴 LIVE on website:</strong> {liveOffer.title}</div>
         </div>
@@ -375,13 +406,13 @@ function Offers({ offers, reload, toast }) {
         <Btn onClick={()=>{setForm(blank);setModal('add')}}>+ New Offer</Btn>
       </div>
 
-      <div style={{background:'rgba(255,60,0,0.08)',border:'1px solid rgba(255,60,0,0.25)',borderRadius:10,padding:'12px 18px',fontSize:13,color:'#ddd',marginBottom:24}}>
+      <div style={{background:'rgba(124,58,237,0.08)',border:'1px solid rgba(124,58,237,0.25)',borderRadius:10,padding:'12px 18px',fontSize:13,color:'#ddd',marginBottom:24}}>
         💡 <strong style={{color:C.accent}}>Activate</strong> an offer → banner + poster appears on homepage. Upload a poster image for a visual banner.
       </div>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(300px,1fr))',gap:20}}>
         {offers.map(o=>(
-          <Card key={o.id} className="adm-fade" style={{overflow:'hidden',border:o.status==='ON'?`2px solid ${C.accent}`:`1px solid ${C.border}`,boxShadow:o.status==='ON'?'0 0 24px rgba(255,60,0,0.2)':'none',transition:'all .3s'}}>
+          <Card key={o.id} className="adm-fade" style={{overflow:'hidden',border:o.status==='ON'?`2px solid ${C.accent}`:`1px solid ${C.border}`,boxShadow:o.status==='ON'?'0 0 24px rgba(124,58,237,0.2)':'none',transition:'all .3s'}}>
             {/* Poster image */}
             {o.poster
               ? <div style={{position:'relative'}}>
@@ -717,7 +748,7 @@ export default function AdminPage() {
                 {collapsed?'☰':'✕'}
               </button>
               {offers.find(o=>o.status==='ON') && (
-                <div style={{fontSize:12,background:'rgba(255,60,0,0.15)',color:C.accent,border:'1px solid rgba(255,60,0,0.3)',borderRadius:20,padding:'3px 12px',fontWeight:600}}>
+                <div style={{fontSize:12,background:'rgba(124,58,237,0.15)',color:C.accent,border:'1px solid rgba(124,58,237,0.3)',borderRadius:20,padding:'3px 12px',fontWeight:600}}>
                   🔴 Offer live on website
                 </div>
               )}
