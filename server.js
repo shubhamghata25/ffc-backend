@@ -124,83 +124,70 @@ const Order       = mongoose.model('Order',        orderSchema)
 /* ════════════════════════════════════════════
    SEED — runs once when collections are empty
 ════════════════════════════════════════════ */
+/* ════════════════════════════════════════════
+   SEED — uses updateOne + upsert:true
+   This means:
+   - If document with _uid exists → SKIP (never overwrite admin changes)
+   - If document does not exist   → INSERT default
+   Safe to run on every startup. Admin data is never lost on redeploy.
+════════════════════════════════════════════ */
+async function upsertOne(Model, _uid, data) {
+  await Model.updateOne({ _uid }, { $setOnInsert: { _uid, ...data } }, { upsert:true })
+}
+
 async function seedIfEmpty() {
-  /* Plans */
-  if (await Plan.countDocuments() === 0) {
-    await Plan.insertMany([
-      { _uid:'plan1', label:'Monthly',     period:'month',    price:1199, originalPrice:1199, popular:false, active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes'],                                                                     description:'Perfect for trying out our gym.',   order:1 },
-      { _uid:'plan2', label:'Quarterly',   period:'3 months', price:2999, originalPrice:2999, popular:true,  active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes','1 Personal session'],                                              description:'Best value for short-term goals.',  order:2 },
-      { _uid:'plan3', label:'Half Yearly', period:'6 months', price:4999, originalPrice:4999, popular:false, active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes','2 Personal sessions','Body analysis'],                          description:'Commit to 6 months and transform.', order:3 },
-      { _uid:'plan4', label:'Yearly',      period:'year',     price:9999, originalPrice:9999, popular:false, active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes','5 Personal sessions','Body analysis','Priority support'], description:'Best value for serious athletes.',   order:4 },
-    ])
-    console.log('✅ Seeded plans')
-  }
+  /* Plans — only insert if _uid does not already exist */
+  await upsertOne(Plan, 'plan1', { label:'Monthly',     period:'month',    price:1199, originalPrice:1199, discount:0, discountType:'percent', popular:false, active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes'],                                                                     description:'Perfect for trying out our gym.',   order:1 })
+  await upsertOne(Plan, 'plan2', { label:'Quarterly',   period:'3 months', price:2999, originalPrice:2999, discount:0, discountType:'percent', popular:true,  active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes','1 Personal session'],                                              description:'Best value for short-term goals.',  order:2 })
+  await upsertOne(Plan, 'plan3', { label:'Half Yearly', period:'6 months', price:4999, originalPrice:4999, discount:0, discountType:'percent', popular:false, active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes','2 Personal sessions','Body analysis'],                          description:'Commit to 6 months and transform.', order:3 })
+  await upsertOne(Plan, 'plan4', { label:'Yearly',      period:'year',     price:9999, originalPrice:9999, discount:0, discountType:'percent', popular:false, active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes','5 Personal sessions','Body analysis','Priority support'], description:'Best value for serious athletes.',   order:4 })
+
   /* Trainers */
-  if (await Trainer.countDocuments() === 0) {
-    await Trainer.insertMany([
-      { _uid:'t1', name:'Nagendra Singh', role:'Head Trainer',  exp:'8+ Years', spec:'Strength & Fat Loss',     status:'Active', photo:'' },
-      { _uid:'t2', name:'Depankar Bera',  role:'Fitness Coach', exp:'5+ Years', spec:'Weight Loss & Nutrition', status:'Active', photo:'' },
-    ])
-    console.log('✅ Seeded trainers')
-  }
-  /* Categories */
-  if (await Category.countDocuments() === 0) {
-    await Category.insertMany([
-      { _uid:'cat1', name:'Supplements',   image:'', order:1 },
-      { _uid:'cat2', name:'Gym Equipment', image:'', order:2 },
-      { _uid:'cat3', name:'Extra',         image:'', order:3 },
-    ])
-    await Subcategory.insertMany([
-      { _uid:'sub1', categoryId:'cat1', name:'Protein',     image:'', order:1 },
-      { _uid:'sub2', categoryId:'cat1', name:'Vitamins',    image:'', order:2 },
-      { _uid:'sub3', categoryId:'cat1', name:'Creatine',    image:'', order:3 },
-      { _uid:'sub4', categoryId:'cat2', name:'Dumbbells',   image:'', order:1 },
-      { _uid:'sub5', categoryId:'cat2', name:'Resistance',  image:'', order:2 },
-      { _uid:'sub6', categoryId:'cat3', name:'Accessories', image:'', order:1 },
-      { _uid:'sub7', categoryId:'cat3', name:'Apparel',     image:'', order:2 },
-    ])
-    await Product.insertMany([
-      { _uid:'p1', subcategoryId:'sub1', categoryId:'cat1', name:'Whey Protein 1kg',   description:'Premium whey protein.',    price:1599, image:'', inStock:true },
-      { _uid:'p2', subcategoryId:'sub3', categoryId:'cat1', name:'Creatine 500g',       description:'Pure creatine.',           price:999,  image:'', inStock:true },
-      { _uid:'p3', subcategoryId:'sub4', categoryId:'cat2', name:'Adjustable Dumbbell', description:'5–25kg set.',             price:3499, image:'', inStock:true },
-      { _uid:'p4', subcategoryId:'sub5', categoryId:'cat2', name:'Resistance Band Set', description:'5-band home workout set.', price:699,  image:'', inStock:true },
-      { _uid:'p5', subcategoryId:'sub6', categoryId:'cat3', name:'Gym Gloves',          description:'Anti-slip lifting gloves.',price:349,  image:'', inStock:true },
-    ])
-    console.log('✅ Seeded store')
-  }
+  await upsertOne(Trainer, 't1', { name:'Nagendra Singh', role:'Head Trainer',  exp:'8+ Years', spec:'Strength & Fat Loss',     status:'Active', photo:'' })
+  await upsertOne(Trainer, 't2', { name:'Depankar Bera',  role:'Fitness Coach', exp:'5+ Years', spec:'Weight Loss & Nutrition', status:'Active', photo:'' })
+
+  /* Store categories */
+  await upsertOne(Category, 'cat1', { name:'Supplements',   image:'', order:1 })
+  await upsertOne(Category, 'cat2', { name:'Gym Equipment', image:'', order:2 })
+  await upsertOne(Category, 'cat3', { name:'Extra',         image:'', order:3 })
+
+  /* Subcategories */
+  await upsertOne(Subcategory, 'sub1', { categoryId:'cat1', name:'Protein',     image:'', order:1 })
+  await upsertOne(Subcategory, 'sub2', { categoryId:'cat1', name:'Vitamins',    image:'', order:2 })
+  await upsertOne(Subcategory, 'sub3', { categoryId:'cat1', name:'Creatine',    image:'', order:3 })
+  await upsertOne(Subcategory, 'sub4', { categoryId:'cat2', name:'Dumbbells',   image:'', order:1 })
+  await upsertOne(Subcategory, 'sub5', { categoryId:'cat2', name:'Resistance',  image:'', order:2 })
+  await upsertOne(Subcategory, 'sub6', { categoryId:'cat3', name:'Accessories', image:'', order:1 })
+  await upsertOne(Subcategory, 'sub7', { categoryId:'cat3', name:'Apparel',     image:'', order:2 })
+
+  /* Products */
+  await upsertOne(Product, 'p1', { subcategoryId:'sub1', categoryId:'cat1', name:'Whey Protein 1kg',   description:'Premium whey protein.',     price:1599, image:'', inStock:true })
+  await upsertOne(Product, 'p2', { subcategoryId:'sub3', categoryId:'cat1', name:'Creatine 500g',       description:'Pure creatine.',            price:999,  image:'', inStock:true })
+  await upsertOne(Product, 'p3', { subcategoryId:'sub4', categoryId:'cat2', name:'Adjustable Dumbbell', description:'5–25kg set.',              price:3499, image:'', inStock:true })
+  await upsertOne(Product, 'p4', { subcategoryId:'sub5', categoryId:'cat2', name:'Resistance Band Set', description:'5-band home workout set.',  price:699,  image:'', inStock:true })
+  await upsertOne(Product, 'p5', { subcategoryId:'sub6', categoryId:'cat3', name:'Gym Gloves',          description:'Anti-slip lifting gloves.', price:349,  image:'', inStock:true })
+
   /* Exercises */
-  if (await Exercise.countDocuments() === 0) {
-    await Exercise.insertMany([
-      { _uid:'e1', name:'Bench Press',    muscle:'Chest',     level:'Intermediate', description:'Classic chest exercise.',  ytLink:'https://www.youtube.com/watch?v=rT7DgCr-3pg', image:'' },
-      { _uid:'e2', name:'Squats',         muscle:'Legs',      level:'Beginner',     description:'King of leg exercises.',   ytLink:'https://www.youtube.com/watch?v=aclHkVaku9U', image:'' },
-      { _uid:'e3', name:'Dumbbell Curl',  muscle:'Biceps',    level:'Advanced',     description:'Isolation for biceps.',    ytLink:'https://www.youtube.com/watch?v=ykJmrZ5v0Oo', image:'' },
-      { _uid:'e4', name:'Deadlift',       muscle:'Back',      level:'Advanced',     description:'Full-body compound lift.', ytLink:'https://www.youtube.com/watch?v=op9kVnSso6Q', image:'' },
-      { _uid:'e5', name:'Pull Ups',       muscle:'Back',      level:'Intermediate', description:'Upper body pulling.',      ytLink:'https://www.youtube.com/watch?v=eGo4IYlbE5g', image:'' },
-      { _uid:'e6', name:'Shoulder Press', muscle:'Shoulders', level:'Beginner',     description:'Overhead pressing.',       ytLink:'https://www.youtube.com/watch?v=qEwKCR5JCog', image:'' },
-    ])
-    console.log('✅ Seeded exercises')
-  }
-  /* Offer */
-  if (await Offer.countDocuments() === 0) {
-    await Offer.create({ _uid:'o1', status:'OFF', title:'Summer Flash Sale 💥', description:'Get 20% off on all plans!', btn:'Grab Now', link:'/pricing', poster:'' })
-    console.log('✅ Seeded offer')
-  }
-  /* Sample members/leads */
-  if (await Member.countDocuments() === 0) {
-    await Member.insertMany([
-      { _uid:'m1', name:'Rahul Sharma',  phone:'9876543210', plan:'Monthly – ₹1199',     joined:'2026-01-15', status:'Active',   fee:'Paid'   },
-      { _uid:'m2', name:'Priya Yadav',   phone:'9812345670', plan:'Half Yearly – ₹4999', joined:'2025-10-01', status:'Active',   fee:'Paid'   },
-      { _uid:'m3', name:'Amit Kulkarni', phone:'9988776655', plan:'Quarterly – ₹2999',   joined:'2026-02-20', status:'Inactive', fee:'Unpaid' },
-    ])
-    console.log('✅ Seeded members')
-  }
-  if (await Lead.countDocuments() === 0) {
-    await Lead.insertMany([
-      { _uid:'l1', name:'Mohit Raut',  email:'mohit@mail.com', phone:'9911223344', message:'Interested in monthly plan', date:'2026-04-05' },
-      { _uid:'l2', name:'Divya Singh', email:'divya@mail.com', phone:'9933445566', message:'Want personal training',     date:'2026-04-06' },
-    ])
-    console.log('✅ Seeded leads')
-  }
+  await upsertOne(Exercise, 'e1', { name:'Bench Press',    muscle:'Chest',     level:'Intermediate', description:'Classic chest exercise.',  ytLink:'https://www.youtube.com/watch?v=rT7DgCr-3pg', image:'' })
+  await upsertOne(Exercise, 'e2', { name:'Squats',         muscle:'Legs',      level:'Beginner',     description:'King of leg exercises.',   ytLink:'https://www.youtube.com/watch?v=aclHkVaku9U', image:'' })
+  await upsertOne(Exercise, 'e3', { name:'Dumbbell Curl',  muscle:'Biceps',    level:'Advanced',     description:'Isolation for biceps.',    ytLink:'https://www.youtube.com/watch?v=ykJmrZ5v0Oo', image:'' })
+  await upsertOne(Exercise, 'e4', { name:'Deadlift',       muscle:'Back',      level:'Advanced',     description:'Full-body compound lift.', ytLink:'https://www.youtube.com/watch?v=op9kVnSso6Q', image:'' })
+  await upsertOne(Exercise, 'e5', { name:'Pull Ups',       muscle:'Back',      level:'Intermediate', description:'Upper body pulling.',      ytLink:'https://www.youtube.com/watch?v=eGo4IYlbE5g', image:'' })
+  await upsertOne(Exercise, 'e6', { name:'Shoulder Press', muscle:'Shoulders', level:'Beginner',     description:'Overhead pressing.',       ytLink:'https://www.youtube.com/watch?v=qEwKCR5JCog', image:'' })
+
+  /* Default offer — only if none exist */
+  await upsertOne(Offer, 'o1', { status:'OFF', title:'Summer Flash Sale 💥', description:'Get 20% off on all plans!', btn:'Grab Now', link:'/pricing', poster:'' })
+
+  /* Sample members */
+  await upsertOne(Member, 'm1', { name:'Rahul Sharma',  phone:'9876543210', plan:'Monthly – ₹1199',     joined:'2026-01-15', status:'Active',   fee:'Paid'   })
+  await upsertOne(Member, 'm2', { name:'Priya Yadav',   phone:'9812345670', plan:'Half Yearly – ₹4999', joined:'2025-10-01', status:'Active',   fee:'Paid'   })
+  await upsertOne(Member, 'm3', { name:'Amit Kulkarni', phone:'9988776655', plan:'Quarterly – ₹2999',   joined:'2026-02-20', status:'Inactive', fee:'Unpaid' })
+
+  /* Sample leads */
+  await upsertOne(Lead, 'l1', { name:'Mohit Raut',  email:'mohit@mail.com', phone:'9911223344', message:'Interested in monthly plan', date:'2026-04-05' })
+  await upsertOne(Lead, 'l2', { name:'Divya Singh', email:'divya@mail.com', phone:'9933445566', message:'Want personal training',     date:'2026-04-06' })
+
+  console.log('✅ Seed complete — existing admin data preserved')
 }
 
 /* ── Helper: convert mongoose doc to plain object with id field ── */
