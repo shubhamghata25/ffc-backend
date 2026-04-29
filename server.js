@@ -42,7 +42,8 @@ const memberSchema = new mongoose.Schema({
   _uid:    { type:String, default:uid, unique:true },
   name:    String, phone:String, plan:String,
   joined:  String, status:String, fee:String,
-  endDate: { type:String, default:'' },  // optional explicit membership end date 'YYYY-MM-DD'
+  endDate: { type:String, default:'' },
+  email:   { type:String, default:'' },
 }, { timestamps:true })
 
 const leadSchema = new mongoose.Schema({
@@ -110,6 +111,17 @@ const orderSchema = new mongoose.Schema({
   meta:      mongoose.Schema.Types.Mixed,
 }, { timestamps:true })
 
+const attendanceSchema = new mongoose.Schema({
+  _uid:      { type:String, default:uid, unique:true },
+  memberId:  String,
+  scanDate:  String,
+  time:      String,
+  memberName:String,
+  phone:     String,
+  plan:      String,
+}, { timestamps:true })
+attendanceSchema.index({ memberId:1, scanDate:1 }, { unique:true })
+
 /* Models */
 const Member      = mongoose.model('Member',      memberSchema)
 const Lead        = mongoose.model('Lead',         leadSchema)
@@ -121,6 +133,7 @@ const Subcategory = mongoose.model('Subcategory',  subcategorySchema)
 const Product     = mongoose.model('Product',      productSchema)
 const Exercise    = mongoose.model('Exercise',     exerciseSchema)
 const Order       = mongoose.model('Order',        orderSchema)
+const Attendance  = mongoose.model('Attendance',   attendanceSchema)
 
 /* ════════════════════════════════════════════
    SEED — runs once when collections are empty
@@ -369,10 +382,116 @@ app.post('/api/create-order', async (req, res) => {
 })
 app.post('/api/verify-payment', async (req, res) => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature, meta } = req.body
-  const expected = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET||'placeholder').update(razorpay_order_id+'|'+razorpay_payment_id).digest('hex')
-  if (expected !== razorpay_signature) return res.status(400).json({ success:false, error:'Invalid signature' })
-  const order = await Order.create({ _uid:uid(), orderId:razorpay_order_id, paymentId:razorpay_payment_id, status:'paid', meta })
-  res.json({ success:true, order:toObj(order) })
+
+  // 1. Verify Razorpay signature
+  const expected = crypto
+    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || 'placeholder')
+    .update(razorpay_order_id + '|' + razorpay_payment_id)
+    .digest('hex')
+  if (expected !== razorpay_signature)
+    return res.status(400).json({ success:false, error:'Invalid signature' })
+
+  // 2. Save order record
+  const order = await Order.create({
+    _uid:uid(), orderId:razorpay_order_id,
+    paymentId:razorpay_payment_id, status:'paid', meta,
+  })
+
+  // 3. Auto-create Member from payment meta
+  let newMember = null
+  try {
+    const { memberName, memberEmail, memberPhone, planLabel, planPeriod, planPrice } = meta || {}
+    if (memberName && memberPhone) {
+      const today  = new Date()
+      const joined = today.toISOString().slice(0, 10)
+      const DAYS   = { month:30, 'month':30, '3 months':91, '6 months':182, year:365, day:1, 'day':1 }
+      const days   = DAYS[planPeriod] || 30
+      const endDate = new Date(today.getTime() + days * 86400000).toISOString().slice(0, 10)
+      const planStr = planLabel && planPrice ? planLabel + ' - Rs.' + planPrice : (planLabel || 'Monthly')
+
+      newMember = await Member.create({
+        _uid:uid(), name:memberName, phone:memberPhone,
+        email:memberEmail || '', plan:planStr,
+        joined, endDate, status:'Active', fee:'Paid',
+      })
+      console.log('Member auto-created:', newMember._uid, memberName)
+    }
+  } catch(e) { console.error('Member auto-create error:', e.message) }
+
+  // 4. Send confirmation email with QR attached
+  if (newMember && meta?.memberEmail && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    try {
+      const QRCode   = (await import('qrcode')).default
+      const qrPayload = JSON.stringify({ id: newMember._uid, gym: 'FFC' })
+      const qrDataUrl = await QRCode.toDataURL(qrPayload, { width:280, margin:2, color:{ dark:'#111111', light:'#ffffff' } })
+      const qrBase64  = qrDataUrl.replace(/^data:image\/png;base64,/, '')
+
+      const planDisplay = meta.planLabel || 'Membership'
+      const priceDisplay = meta.planPrice ? 'Rs.' + meta.planPrice : ''
+      const endDisplay   = newMember.endDate || ''
+
+      await mailer.sendMail({
+        from:    '"Friends Fitness Club" <' + process.env.EMAIL_USER + '>',
+        to:      meta.memberEmail,
+        subject: 'Welcome to FFC! Your ' + planDisplay + ' Membership is Active',
+        html: `
+<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#06050f;color:#f0eeff;border-radius:16px;overflow:hidden;">
+  <div style="background:linear-gradient(135deg,#7c3aed,#9c59f7);padding:32px;text-align:center;">
+    <h1 style="margin:0;font-size:32px;letter-spacing:3px;color:#fff;">FFC</h1>
+    <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:13px;letter-spacing:2px;">FRIENDS FITNESS CLUB</p>
+  </div>
+  <div style="padding:32px;">
+    <h2 style="color:#bb86fc;margin-top:0;">Welcome, ${meta.memberName}!</h2>
+    <p style="color:#b8b0d4;">Your membership is now <strong style="color:#22c55e;">active</strong>.</p>
+    <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+      <tr style="border-bottom:1px solid #2a2347;"><td style="padding:10px 0;color:#6b6490;">Plan</td><td style="padding:10px 0;font-weight:600;">${planDisplay}</td></tr>
+      <tr style="border-bottom:1px solid #2a2347;"><td style="padding:10px 0;color:#6b6490;">Amount Paid</td><td style="padding:10px 0;font-weight:600;color:#22c55e;">${priceDisplay}</td></tr>
+      <tr style="border-bottom:1px solid #2a2347;"><td style="padding:10px 0;color:#6b6490;">Start Date</td><td style="padding:10px 0;">${newMember.joined}</td></tr>
+      <tr><td style="padding:10px 0;color:#6b6490;">Valid Until</td><td style="padding:10px 0;font-weight:600;color:#f59e0b;">${endDisplay}</td></tr>
+    </table>
+    <div style="background:#130f24;border:1px solid #2a2347;border-radius:12px;padding:20px;text-align:center;margin:24px 0;">
+      <p style="color:#bb86fc;font-weight:700;margin:0 0 12px;">Your Daily Attendance QR Code</p>
+      <img src="cid:qrcode" alt="QR Code" style="width:200px;height:200px;border-radius:8px;display:block;margin:0 auto;"/>
+      <p style="color:#6b6490;font-size:12px;margin:12px 0 0;">Show this QR at the gym counter every day to mark attendance. Works once per day.</p>
+    </div>
+    <div style="background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.25);border-radius:10px;padding:16px;">
+      <p style="margin:0;font-size:13px;color:#b8b0d4;line-height:1.8;">
+        Address: RT Complex 2nd Floor, Wardhaman Nagar, Nagpur<br/>
+        Phone: +91 84848 05154<br/>
+        Timings: 5:00 AM - 10:00 PM (Mon-Sat)
+      </p>
+    </div>
+    <p style="color:#6b6490;font-size:11px;text-align:center;margin-top:20px;">Payment ID: ${razorpay_payment_id}</p>
+  </div>
+</div>`,
+        attachments: [{
+          filename:'FFC_QR_Code.png', content:qrBase64,
+          encoding:'base64', cid:'qrcode', contentType:'image/png',
+        }],
+      })
+      console.log('Confirmation email sent to', meta.memberEmail)
+    } catch(e) { console.error('Email send failed:', e.message) }
+  }
+
+  // 5. Admin notification email
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS && meta?.memberName) {
+    try {
+      await mailer.sendMail({
+        from:    '"FFC Admin" <' + process.env.EMAIL_USER + '>',
+        to:      process.env.EMAIL_USER,
+        subject: 'New Payment: ' + meta.memberName + ' - ' + (meta.planLabel || 'Membership'),
+        html:`<h2>New Membership Payment</h2>
+          <p><b>Name:</b> ${meta.memberName}</p>
+          <p><b>Phone:</b> ${meta.memberPhone}</p>
+          <p><b>Email:</b> ${meta.memberEmail || 'not provided'}</p>
+          <p><b>Plan:</b> ${meta.planLabel} - Rs.${meta.planPrice}</p>
+          <p><b>Payment ID:</b> ${razorpay_payment_id}</p>
+          <p><b>Member ID:</b> ${newMember?._uid || 'auto-create failed'}</p>`,
+      })
+    } catch {}
+  }
+
+  res.json({ success:true, order:toObj(order), memberCreated:!!newMember })
 })
 
 /* ════════════════════════════════════════════
@@ -393,8 +512,8 @@ app.post('/api/contact', async (req, res) => {
    ADMIN — Members
 ════════════════════════════════════════════ */
 app.get('/api/admin/members',        adminOnly, async (_req,res) => { try{ res.json(toArr(await Member.find().sort('-createdAt'))) }catch{ res.json([]) } })
-app.post('/api/admin/members',       adminOnly, async (req,res) => { try{ const m=await Member.create({...req.body,_uid:uid()}); silentSheetSync(m); res.json(toObj(m)) }catch(e){ res.status(500).json({error:e.message}) } })
-app.put('/api/admin/members/:id',    adminOnly, async (req,res) => { try{ const m=await Member.findOneAndUpdate({_uid:req.params.id},{...req.body},{new:true}); if(m) silentSheetSync(m); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
+app.post('/api/admin/members',       adminOnly, async (req,res) => { try{ const m=await Member.create({...req.body,_uid:uid()}); res.json(toObj(m)) }catch(e){ res.status(500).json({error:e.message}) } })
+app.put('/api/admin/members/:id',    adminOnly, async (req,res) => { try{ await Member.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 app.delete('/api/admin/members/:id', adminOnly, async (req,res) => { try{ await Member.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
 /* ════════════════════════════════════════════
@@ -480,228 +599,84 @@ app.put('/api/admin/exercises/:id',    adminOnly, async (req,res) => { try{ awai
 app.delete('/api/admin/exercises/:id', adminOnly, async (req,res) => { try{ await Exercise.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
 /* ════════════════════════════════════════════
+   ADMIN — Attendance (QR scan)
+════════════════════════════════════════════ */
+
+// POST /api/admin/attendance/scan — called by QRScanner component
+app.post('/api/admin/attendance/scan', adminOnly, async (req, res) => {
+  try {
+    const { memberId } = req.body
+    if (!memberId) return res.status(400).json({ success:false, message:'Missing memberId' })
+
+    const member = await Member.findOne({ _uid: memberId })
+    if (!member) return res.json({ success:false, code:'NOT_FOUND', message:'Member not found in system.' })
+
+    // Check membership active (use endDate field, or compute from plan + joined)
+    const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+    if (member.endDate && member.endDate < todayIST)
+      return res.json({ success:false, code:'EXPIRED', memberName:member.name, message:'Membership expired on ' + member.endDate + '. Please renew.' })
+
+    // Check already scanned today
+    const already = await Attendance.findOne({ memberId, scanDate:todayIST })
+    if (already)
+      return res.json({ success:false, code:'ALREADY', memberName:member.name, message:'Already checked in today at ' + already.time })
+
+    // Mark attendance
+    const timeIST = new Date().toLocaleTimeString('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit' })
+    await Attendance.create({
+      _uid:uid(), memberId, scanDate:todayIST, time:timeIST,
+      memberName:member.name, phone:member.phone, plan:member.plan,
+    })
+
+    res.json({ success:true, code:'OK', memberName:member.name, message:'Welcome, ' + member.name + '! Attendance marked.' })
+  } catch(e) {
+    if (e.code === 11000) // duplicate key — race condition
+      return res.json({ success:false, code:'ALREADY', message:'Already checked in today.' })
+    res.status(500).json({ success:false, message:e.message })
+  }
+})
+
+// GET /api/admin/attendance/today — today's check-in log
+app.get('/api/admin/attendance/today', adminOnly, async (_req, res) => {
+  try {
+    const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+    const logs = await Attendance.find({ scanDate:todayIST }).sort('-createdAt')
+    res.json(logs.map(a => ({ id:a._uid, memberName:a.memberName, phone:a.phone, plan:a.plan, time:a.time })))
+  } catch { res.json([]) }
+})
+
+// GET /api/admin/members/expiring — members expiring within 10 days
+app.get('/api/admin/members/expiring', adminOnly, async (_req, res) => {
+  try {
+    const todayIST    = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+    const in10        = new Date(new Date().getTime() + 10 * 86400000).toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+    const DAYS        = { Monthly:30, Quarterly:91, 'Half Yearly':182, Yearly:365, Daily:1 }
+    const allActive   = await Member.find({ status:'Active' })
+    const expiring    = []
+
+    for (const m of allActive) {
+      let endStr = m.endDate || ''
+      if (!endStr || !endStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        const planLabel = (m.plan || '').split(/[-–]/)[0].trim()
+        const days = DAYS[planLabel]
+        if (!days || !m.joined) continue
+        endStr = new Date(new Date(m.joined).getTime() + days * 86400000)
+          .toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+      }
+      if (endStr >= todayIST && endStr <= in10) {
+        const ms = new Date(endStr) - new Date(todayIST)
+        expiring.push({ id:m._uid, name:m.name, phone:m.phone, plan:m.plan, endDate:endStr, daysLeft:Math.max(0, Math.round(ms / 86400000)) })
+      }
+    }
+    expiring.sort((a, b) => a.daysLeft - b.daysLeft)
+    res.json(expiring)
+  } catch(e) { res.status(500).json({ error:e.message }) }
+})
+
+/* ════════════════════════════════════════════
    ADMIN — Orders
 ════════════════════════════════════════════ */
 app.get('/api/admin/orders', adminOnly, async (_req,res) => { try{ res.json(toArr(await Order.find().sort('-createdAt'))) }catch{ res.json([]) } })
-
-/* ════════════════════════════════════════════
-   TASK 2: ATTENDANCE
-   POST /api/admin/attendance/scan  — mark attendance (once per day)
-   GET  /api/admin/attendance/today — today's check-in log
-════════════════════════════════════════════ */
-
-const attendanceSchema = new mongoose.Schema({
-  _uid:       { type:String, default:uid, unique:true },
-  memberId:   { type:String, required:true },
-  scanDate:   { type:String, required:true },   // 'YYYY-MM-DD' IST
-  scannedAt:  { type:Date,   default:Date.now },
-}, { timestamps:true })
-// DB-level unique: one scan per member per day
-attendanceSchema.index({ memberId:1, scanDate:1 }, { unique:true })
-const Attendance = mongoose.model('Attendance', attendanceSchema)
-
-/* Helper — today's date in IST as 'YYYY-MM-DD' */
-function todayIST() {
-  return new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' }) // returns YYYY-MM-DD
-}
-
-app.post('/api/admin/attendance/scan', adminOnly, async (req, res) => {
-  const { memberId } = req.body
-  if (!memberId) return res.status(400).json({ success:false, message:'memberId required' })
-
-  // 1. Validate member exists
-  const member = await Member.findOne({ _uid: memberId })
-  if (!member) return res.json({ success:false, code:'NOT_FOUND', message:'Member not found.' })
-
-  // 2. Check already scanned today
-  const today = todayIST()
-  const existing = await Attendance.findOne({ memberId, scanDate:today })
-  if (existing) {
-    return res.json({ success:false, code:'ALREADY', memberName:member.name, message:'Already checked in today.' })
-  }
-
-  // 3. Insert (unique index will also block race conditions)
-  try {
-    await Attendance.create({ _uid:uid(), memberId, scanDate:today })
-    return res.json({ success:true, code:'OK', memberName:member.name, message:`Welcome, ${member.name}! Attendance marked.` })
-  } catch(e) {
-    if (e.code === 11000) {
-      // Race condition — duplicate key
-      return res.json({ success:false, code:'ALREADY', memberName:member.name, message:'Already checked in today.' })
-    }
-    return res.status(500).json({ success:false, message:'Server error: ' + e.message })
-  }
-})
-
-app.get('/api/admin/attendance/today', adminOnly, async (_req, res) => {
-  try {
-    const today = todayIST()
-    const logs  = await Attendance.find({ scanDate:today }).sort('-scannedAt')
-    // Join with members for display
-    const memberIds = logs.map(l => l.memberId)
-    const members   = await Member.find({ _uid:{ $in:memberIds } })
-    const mMap      = Object.fromEntries(members.map(m => [m._uid, m]))
-    const result    = logs.map(l => {
-      const m = mMap[l.memberId] || {}
-      return {
-        id:         String(l._id),
-        memberId:   l.memberId,
-        memberName: m.name || 'Unknown',
-        phone:      m.phone || '',
-        plan:       m.plan  || '',
-        scanDate:   l.scanDate,
-        time:       new Date(l.scannedAt).toLocaleTimeString('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit' }),
-      }
-    })
-    res.json(result)
-  } catch(e) { res.json([]) }
-})
-
-/* ════════════════════════════════════════════
-   TASK 3: EXPIRY ALERTS
-   GET /api/admin/members/expiring
-   Returns members expiring within 10 days (server-side IST date)
-════════════════════════════════════════════ */
-app.get('/api/admin/members/expiring', adminOnly, async (_req, res) => {
-  try {
-    const today     = todayIST()                      // 'YYYY-MM-DD'
-    const inTenDays = new Date(new Date(today).getTime() + 10 * 86400000)
-      .toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
-
-    /* Members whose plan field contains a date — we use 'joined' + plan duration
-       OR you can add a membership_end_date field to the schema.
-       Since the existing schema stores plan as text (e.g. "Monthly – ₹1199")
-       and joined as a date string, we compute end date from those. */
-
-    const allMembers = await Member.find({ status:'Active' })
-    const DURATIONS  = { Monthly:30, Quarterly:91, 'Half Yearly':182, Yearly:365 }
-
-    const expiring = []
-    for (const m of allMembers) {
-      let endStr
-
-      // Prefer explicit endDate field if admin set it
-      if (m.endDate && /^\d{4}-\d{2}-\d{2}$/.test(m.endDate)) {
-        endStr = m.endDate
-      } else {
-        // Fall back: compute from joined + plan duration
-        const planLabel = (m.plan||'').split('–')[0].trim()
-        const days      = DURATIONS[planLabel]
-        if (!days || !m.joined) continue
-        const end = new Date(new Date(m.joined).getTime() + days * 86400000)
-        endStr    = end.toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
-      }
-
-      if (endStr >= today && endStr <= inTenDays) {
-        const daysLeft = Math.round((new Date(endStr) - new Date(today)) / 86400000)
-        expiring.push({
-          id:       m._uid || String(m._id),
-          name:     m.name,
-          phone:    m.phone,
-          plan:     m.plan,
-          endDate:  endStr,
-          daysLeft: Math.max(0, daysLeft),
-        })
-      }
-    }
-
-    expiring.sort((a,b) => a.daysLeft - b.daysLeft)
-    res.json(expiring)
-  } catch(e) { res.json([]) }
-})
-
-
-/* ════════════════════════════════════════════
-   TASK 4: GOOGLE SHEETS SYNC
-   POST /api/admin/sync-sheets — full member sync
-   Auto-triggers after member create/update
-
-   ENV VARS needed (Render → Environment):
-     GOOGLE_SERVICE_ACCOUNT_EMAIL
-     GOOGLE_PRIVATE_KEY    (base64-encoded private key PEM)
-     GOOGLE_SHEET_ID
-════════════════════════════════════════════ */
-
-async function getGoogleSheetsClient() {
-  const email      = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL
-  const b64Key     = process.env.GOOGLE_PRIVATE_KEY
-  const sheetId    = process.env.GOOGLE_SHEET_ID
-  if (!email || !b64Key || !sheetId) return null
-  try {
-    const { google } = await import('googleapis')
-    const privateKey = Buffer.from(b64Key, 'base64').toString('utf8')
-    const auth = new google.auth.JWT(
-      email, null, privateKey,
-      ['https://www.googleapis.com/auth/spreadsheets']
-    )
-    return { client: google.sheets({ version:'v4', auth }), sheetId }
-  } catch { return null }
-}
-
-async function syncMemberToSheet(member) {
-  const gs = await getGoogleSheetsClient()
-  if (!gs) return { skipped:true }
-  const { client, sheetId } = gs
-  const RANGE  = 'Members!A:I'
-  const HEADER = ['member_id','name','phone','plan','joined','end_date','status','fee','attendance']
-
-  const existing = await client.spreadsheets.values
-    .get({ spreadsheetId:sheetId, range:RANGE }).catch(()=>null)
-  const rows = existing?.data?.values || []
-
-  if (rows.length === 0) {
-    await client.spreadsheets.values.append({
-      spreadsheetId:sheetId, range:RANGE, valueInputOption:'RAW',
-      requestBody:{ values:[HEADER] },
-    })
-    rows.push(HEADER)
-  }
-
-  const attCount = await Attendance.countDocuments({ memberId: member.id || member._uid || '' })
-  const newRow = [
-    member.id || '', member.name || '', member.phone || '',
-    member.plan || '', member.joined || '', member.endDate || '',
-    member.status || '', member.fee || '', String(attCount),
-  ]
-
-  const existIdx = rows.findIndex((r, i) => i > 0 && r[0] === newRow[0])
-  if (existIdx === -1) {
-    await client.spreadsheets.values.append({
-      spreadsheetId:sheetId, range:RANGE, valueInputOption:'RAW',
-      requestBody:{ values:[newRow] },
-    })
-    return { action:'appended' }
-  } else {
-    const rowNum = existIdx + 1
-    await client.spreadsheets.values.update({
-      spreadsheetId:sheetId,
-      range:`Members!A${rowNum}:I${rowNum}`,
-      valueInputOption:'RAW',
-      requestBody:{ values:[newRow] },
-    })
-    return { action:'updated' }
-  }
-}
-
-// Full manual sync — call from Settings page
-app.post('/api/admin/sync-sheets', adminOnly, async (_req, res) => {
-  try {
-    const gs = await getGoogleSheetsClient()
-    if (!gs) return res.status(503).json({ success:false, error:'Google Sheets env vars not set. See SETUP_GUIDE.md.' })
-    const members = await Member.find().sort('-createdAt')
-    const results = []
-    for (const m of members) {
-      const r = await syncMemberToSheet(toObj(m)).catch(e=>({ error:e.message }))
-      results.push({ name:m.name, ...r })
-    }
-    res.json({ success:true, synced:results.length, results })
-  } catch(e) { res.status(500).json({ success:false, error:e.message }) }
-})
-
-// Auto-sync single member after create/update — wrapped so it never blocks API response
-async function silentSheetSync(memberDoc) {
-  try { await syncMemberToSheet(toObj(memberDoc)) } catch {}
-}
 
 /* ════════════════════════════════════════════
    START
