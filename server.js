@@ -42,6 +42,7 @@ const memberSchema = new mongoose.Schema({
   _uid:    { type:String, default:uid, unique:true },
   name:    String, phone:String, plan:String,
   joined:  String, status:String, fee:String,
+  endDate: { type:String, default:'' },  // optional explicit membership end date 'YYYY-MM-DD'
 }, { timestamps:true })
 
 const leadSchema = new mongoose.Schema({
@@ -392,8 +393,8 @@ app.post('/api/contact', async (req, res) => {
    ADMIN — Members
 ════════════════════════════════════════════ */
 app.get('/api/admin/members',        adminOnly, async (_req,res) => { try{ res.json(toArr(await Member.find().sort('-createdAt'))) }catch{ res.json([]) } })
-app.post('/api/admin/members',       adminOnly, async (req,res) => { try{ const m=await Member.create({...req.body,_uid:uid()}); res.json(toObj(m)) }catch(e){ res.status(500).json({error:e.message}) } })
-app.put('/api/admin/members/:id',    adminOnly, async (req,res) => { try{ await Member.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
+app.post('/api/admin/members',       adminOnly, async (req,res) => { try{ const m=await Member.create({...req.body,_uid:uid()}); silentSheetSync(m); res.json(toObj(m)) }catch(e){ res.status(500).json({error:e.message}) } })
+app.put('/api/admin/members/:id',    adminOnly, async (req,res) => { try{ const m=await Member.findOneAndUpdate({_uid:req.params.id},{...req.body},{new:true}); if(m) silentSheetSync(m); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 app.delete('/api/admin/members/:id', adminOnly, async (req,res) => { try{ await Member.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
 /* ════════════════════════════════════════════
@@ -482,6 +483,225 @@ app.delete('/api/admin/exercises/:id', adminOnly, async (req,res) => { try{ awai
    ADMIN — Orders
 ════════════════════════════════════════════ */
 app.get('/api/admin/orders', adminOnly, async (_req,res) => { try{ res.json(toArr(await Order.find().sort('-createdAt'))) }catch{ res.json([]) } })
+
+/* ════════════════════════════════════════════
+   TASK 2: ATTENDANCE
+   POST /api/admin/attendance/scan  — mark attendance (once per day)
+   GET  /api/admin/attendance/today — today's check-in log
+════════════════════════════════════════════ */
+
+const attendanceSchema = new mongoose.Schema({
+  _uid:       { type:String, default:uid, unique:true },
+  memberId:   { type:String, required:true },
+  scanDate:   { type:String, required:true },   // 'YYYY-MM-DD' IST
+  scannedAt:  { type:Date,   default:Date.now },
+}, { timestamps:true })
+// DB-level unique: one scan per member per day
+attendanceSchema.index({ memberId:1, scanDate:1 }, { unique:true })
+const Attendance = mongoose.model('Attendance', attendanceSchema)
+
+/* Helper — today's date in IST as 'YYYY-MM-DD' */
+function todayIST() {
+  return new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' }) // returns YYYY-MM-DD
+}
+
+app.post('/api/admin/attendance/scan', adminOnly, async (req, res) => {
+  const { memberId } = req.body
+  if (!memberId) return res.status(400).json({ success:false, message:'memberId required' })
+
+  // 1. Validate member exists
+  const member = await Member.findOne({ _uid: memberId })
+  if (!member) return res.json({ success:false, code:'NOT_FOUND', message:'Member not found.' })
+
+  // 2. Check already scanned today
+  const today = todayIST()
+  const existing = await Attendance.findOne({ memberId, scanDate:today })
+  if (existing) {
+    return res.json({ success:false, code:'ALREADY', memberName:member.name, message:'Already checked in today.' })
+  }
+
+  // 3. Insert (unique index will also block race conditions)
+  try {
+    await Attendance.create({ _uid:uid(), memberId, scanDate:today })
+    return res.json({ success:true, code:'OK', memberName:member.name, message:`Welcome, ${member.name}! Attendance marked.` })
+  } catch(e) {
+    if (e.code === 11000) {
+      // Race condition — duplicate key
+      return res.json({ success:false, code:'ALREADY', memberName:member.name, message:'Already checked in today.' })
+    }
+    return res.status(500).json({ success:false, message:'Server error: ' + e.message })
+  }
+})
+
+app.get('/api/admin/attendance/today', adminOnly, async (_req, res) => {
+  try {
+    const today = todayIST()
+    const logs  = await Attendance.find({ scanDate:today }).sort('-scannedAt')
+    // Join with members for display
+    const memberIds = logs.map(l => l.memberId)
+    const members   = await Member.find({ _uid:{ $in:memberIds } })
+    const mMap      = Object.fromEntries(members.map(m => [m._uid, m]))
+    const result    = logs.map(l => {
+      const m = mMap[l.memberId] || {}
+      return {
+        id:         String(l._id),
+        memberId:   l.memberId,
+        memberName: m.name || 'Unknown',
+        phone:      m.phone || '',
+        plan:       m.plan  || '',
+        scanDate:   l.scanDate,
+        time:       new Date(l.scannedAt).toLocaleTimeString('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit' }),
+      }
+    })
+    res.json(result)
+  } catch(e) { res.json([]) }
+})
+
+/* ════════════════════════════════════════════
+   TASK 3: EXPIRY ALERTS
+   GET /api/admin/members/expiring
+   Returns members expiring within 10 days (server-side IST date)
+════════════════════════════════════════════ */
+app.get('/api/admin/members/expiring', adminOnly, async (_req, res) => {
+  try {
+    const today     = todayIST()                      // 'YYYY-MM-DD'
+    const inTenDays = new Date(new Date(today).getTime() + 10 * 86400000)
+      .toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+
+    /* Members whose plan field contains a date — we use 'joined' + plan duration
+       OR you can add a membership_end_date field to the schema.
+       Since the existing schema stores plan as text (e.g. "Monthly – ₹1199")
+       and joined as a date string, we compute end date from those. */
+
+    const allMembers = await Member.find({ status:'Active' })
+    const DURATIONS  = { Monthly:30, Quarterly:91, 'Half Yearly':182, Yearly:365 }
+
+    const expiring = []
+    for (const m of allMembers) {
+      let endStr
+
+      // Prefer explicit endDate field if admin set it
+      if (m.endDate && /^\d{4}-\d{2}-\d{2}$/.test(m.endDate)) {
+        endStr = m.endDate
+      } else {
+        // Fall back: compute from joined + plan duration
+        const planLabel = (m.plan||'').split('–')[0].trim()
+        const days      = DURATIONS[planLabel]
+        if (!days || !m.joined) continue
+        const end = new Date(new Date(m.joined).getTime() + days * 86400000)
+        endStr    = end.toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+      }
+
+      if (endStr >= today && endStr <= inTenDays) {
+        const daysLeft = Math.round((new Date(endStr) - new Date(today)) / 86400000)
+        expiring.push({
+          id:       m._uid || String(m._id),
+          name:     m.name,
+          phone:    m.phone,
+          plan:     m.plan,
+          endDate:  endStr,
+          daysLeft: Math.max(0, daysLeft),
+        })
+      }
+    }
+
+    expiring.sort((a,b) => a.daysLeft - b.daysLeft)
+    res.json(expiring)
+  } catch(e) { res.json([]) }
+})
+
+
+/* ════════════════════════════════════════════
+   TASK 4: GOOGLE SHEETS SYNC
+   POST /api/admin/sync-sheets — full member sync
+   Auto-triggers after member create/update
+
+   ENV VARS needed (Render → Environment):
+     GOOGLE_SERVICE_ACCOUNT_EMAIL
+     GOOGLE_PRIVATE_KEY    (base64-encoded private key PEM)
+     GOOGLE_SHEET_ID
+════════════════════════════════════════════ */
+
+async function getGoogleSheetsClient() {
+  const email      = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL
+  const b64Key     = process.env.GOOGLE_PRIVATE_KEY
+  const sheetId    = process.env.GOOGLE_SHEET_ID
+  if (!email || !b64Key || !sheetId) return null
+  try {
+    const { google } = await import('googleapis')
+    const privateKey = Buffer.from(b64Key, 'base64').toString('utf8')
+    const auth = new google.auth.JWT(
+      email, null, privateKey,
+      ['https://www.googleapis.com/auth/spreadsheets']
+    )
+    return { client: google.sheets({ version:'v4', auth }), sheetId }
+  } catch { return null }
+}
+
+async function syncMemberToSheet(member) {
+  const gs = await getGoogleSheetsClient()
+  if (!gs) return { skipped:true }
+  const { client, sheetId } = gs
+  const RANGE  = 'Members!A:I'
+  const HEADER = ['member_id','name','phone','plan','joined','end_date','status','fee','attendance']
+
+  const existing = await client.spreadsheets.values
+    .get({ spreadsheetId:sheetId, range:RANGE }).catch(()=>null)
+  const rows = existing?.data?.values || []
+
+  if (rows.length === 0) {
+    await client.spreadsheets.values.append({
+      spreadsheetId:sheetId, range:RANGE, valueInputOption:'RAW',
+      requestBody:{ values:[HEADER] },
+    })
+    rows.push(HEADER)
+  }
+
+  const attCount = await Attendance.countDocuments({ memberId: member.id || member._uid || '' })
+  const newRow = [
+    member.id || '', member.name || '', member.phone || '',
+    member.plan || '', member.joined || '', member.endDate || '',
+    member.status || '', member.fee || '', String(attCount),
+  ]
+
+  const existIdx = rows.findIndex((r, i) => i > 0 && r[0] === newRow[0])
+  if (existIdx === -1) {
+    await client.spreadsheets.values.append({
+      spreadsheetId:sheetId, range:RANGE, valueInputOption:'RAW',
+      requestBody:{ values:[newRow] },
+    })
+    return { action:'appended' }
+  } else {
+    const rowNum = existIdx + 1
+    await client.spreadsheets.values.update({
+      spreadsheetId:sheetId,
+      range:`Members!A${rowNum}:I${rowNum}`,
+      valueInputOption:'RAW',
+      requestBody:{ values:[newRow] },
+    })
+    return { action:'updated' }
+  }
+}
+
+// Full manual sync — call from Settings page
+app.post('/api/admin/sync-sheets', adminOnly, async (_req, res) => {
+  try {
+    const gs = await getGoogleSheetsClient()
+    if (!gs) return res.status(503).json({ success:false, error:'Google Sheets env vars not set. See SETUP_GUIDE.md.' })
+    const members = await Member.find().sort('-createdAt')
+    const results = []
+    for (const m of members) {
+      const r = await syncMemberToSheet(toObj(m)).catch(e=>({ error:e.message }))
+      results.push({ name:m.name, ...r })
+    }
+    res.json({ success:true, synced:results.length, results })
+  } catch(e) { res.status(500).json({ success:false, error:e.message }) }
+})
+
+// Auto-sync single member after create/update — wrapped so it never blocks API response
+async function silentSheetSync(memberDoc) {
+  try { await syncMemberToSheet(toObj(memberDoc)) } catch {}
+}
 
 /* ════════════════════════════════════════════
    START
