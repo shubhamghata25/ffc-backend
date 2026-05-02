@@ -252,14 +252,68 @@ const razorpay = new Razorpay({
 function createMailer() {
   return nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
+    port: 587,
+    secure: false,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
     tls: { rejectUnauthorized: false },
+    connectionTimeout: 10000,
+    greetingTimeout:   10000,
+    socketTimeout:     15000,
   })
+}
+
+// Brevo (formerly Sendinblue) HTTP API — FREE 300 emails/day
+// Never blocked by Render. Get free key at brevo.com
+// Set BREVO_API_KEY in Render env vars
+async function sendViaBrevo({ to, subject, html, attachments=[] }) {
+  const apiKey = process.env.BREVO_API_KEY
+  if (!apiKey) return false
+
+  const body = {
+    sender:   { name:'Friends Fitness Club', email: process.env.EMAIL_USER || 'friendsfitnessclub18@gmail.com' },
+    to:       [{ email: to }],
+    subject,
+    htmlContent: html,
+  }
+
+  if (attachments.length > 0) {
+    body.attachment = attachments.map(a => ({
+      name:    a.filename,
+      content: a.content,  // base64 string
+    }))
+  }
+
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method:  'POST',
+    headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
+  })
+  const data = await res.json()
+  if (res.ok) { console.log('✅ Email sent via Brevo to', to); return true }
+  console.error('❌ Brevo error:', JSON.stringify(data))
+  return false
+}
+
+// Master send function: tries Brevo first (no port blocking), falls back to Gmail SMTP
+async function sendEmail({ to, subject, html, attachments=[] }) {
+  // Try Brevo first if API key is set (recommended — no port issues)
+  if (process.env.BREVO_API_KEY) {
+    const sent = await sendViaBrevo({ to, subject, html, attachments }).catch(() => false)
+    if (sent) return
+  }
+  // Fall back to Gmail SMTP
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    const mailer = createMailer()
+    await mailer.sendMail({
+      from: '"Friends Fitness Club" <' + process.env.EMAIL_USER + '>',
+      to, subject, html,
+      attachments,
+    })
+    console.log('✅ Email sent via Gmail SMTP to', to)
+  }
 }
 
 // SMS via Fast2SMS (free Indian SMS, no DLT needed for test mode)
@@ -345,15 +399,22 @@ app.get('/api/test-email', async (req, res) => {
     const m = createMailer()
     await m.verify()
     diagnostics.smtp_verify = 'PASSED'
-    await m.sendMail({
-      from:    '"FFC Test" <' + process.env.EMAIL_USER + '>',
+    await sendEmail({
       to,
       subject: 'FFC Email Test - ' + new Date().toLocaleTimeString('en-IN'),
       html:    '<h2>Email is working!</h2><p>FFC backend can send emails successfully.</p><p>Time: ' + new Date().toISOString() + '</p>',
     })
-    res.json({ success:true, diagnostics, message: 'Test email sent to ' + to })
+    res.json({ success:true, diagnostics, method: process.env.BREVO_API_KEY ? 'Brevo' : 'Gmail SMTP', message: 'Test email sent to ' + to })
   } catch(e) {
-    res.json({ success:false, diagnostics, error: e.message, hint: e.message.includes('Invalid login') || e.message.includes('535') ? 'Gmail App Password is wrong. Go to myaccount.google.com → Security → App Passwords → generate one and update EMAIL_PASS on Render' : e.message.includes('ECONNREFUSED') || e.message.includes('ETIMEDOUT') ? 'Cannot connect to Gmail SMTP. Render free tier may block port 465. Trying port 587.' : 'Check Render logs for details' })
+    res.json({ success:false, diagnostics, error: e.message, code: e.code || '', hint:
+      (e.message.includes('Invalid login') || e.message.includes('535') || e.message.includes('534'))
+        ? 'Gmail App Password is wrong. Steps: 1) Go to myaccount.google.com 2) Security 3) App Passwords 4) Generate for Mail 5) Copy 16-char password 6) Update EMAIL_PASS on Render (no spaces)'
+      : (e.message.includes('ECONNREFUSED') || e.message.includes('ETIMEDOUT') || e.message.includes('timeout'))
+        ? 'SMTP connection timed out — port 587 may also be blocked on Render. Contact Render support or use a different email service.'
+      : (e.message.includes('self signed') || e.message.includes('certificate'))
+        ? 'TLS certificate error — already handled in config, redeploy and try again'
+      : 'Unknown error — check full error message above'
+    })
   }
 })
 
@@ -509,11 +570,10 @@ app.post('/api/verify-payment', async (req, res) => {
       const memberName   = meta.memberName || 'Member'
 
       console.log('Sending membership email to:', emailTo)
-      const mailer = createMailer()
-      await mailer.sendMail({
-        from:    '"Friends Fitness Club" <' + process.env.EMAIL_USER + '>',
-        to:      meta.memberEmail,
+      await sendEmail({
+        to:      emailTo,
         subject: 'Welcome to FFC! Your ' + planDisplay + ' Membership is Active',
+        attachments: [{ filename:'FFC_QR_Code.png', content:qrBase64, encoding:'base64', cid:'qrcode', contentType:'image/png' }],
         html: `
 <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#06050f;color:#f0eeff;border-radius:16px;overflow:hidden;">
   <div style="background:linear-gradient(135deg,#7c3aed,#9c59f7);padding:32px;text-align:center;">
@@ -544,18 +604,16 @@ app.post('/api/verify-payment', async (req, res) => {
     <p style="color:#6b6490;font-size:11px;text-align:center;margin-top:20px;">Payment ID: ${razorpay_payment_id}</p>
   </div>
 </div>`,
-        attachments: [{
-          filename:'FFC_QR_Code.png', content:qrBase64,
-          encoding:'base64', cid:'qrcode', contentType:'image/png',
-        }],
       })
-      console.log('Confirmation email sent successfully to', emailTo)
+      console.log('✅ Confirmation email sent successfully to', emailTo)
     } catch(e) {
-      console.error('EMAIL SEND FAILED:', e.message)
-      console.error('EMAIL ERROR CODE:', e.code)
-      console.error('EMAIL_USER:', process.env.EMAIL_USER)
+      console.error('❌ EMAIL SEND FAILED:', e.message)
+      console.error('❌ EMAIL ERROR CODE:', e.code || 'none')
+      console.error('❌ EMAIL_USER used:', process.env.EMAIL_USER)
       if (e.message.includes('Invalid login') || e.message.includes('535') || e.message.includes('534')) {
-        console.error('FIX: Go to myaccount.google.com → Security → App Passwords → generate new password → update EMAIL_PASS on Render')
+        console.error('❌ FIX: Gmail App Password wrong → myaccount.google.com → Security → App Passwords → regenerate → update Render EMAIL_PASS')
+      } else if (e.message.includes('timeout') || e.message.includes('ECONNREFUSED')) {
+        console.error('❌ FIX: Render is blocking SMTP port. Use Brevo (formerly Sendinblue) instead — free 300 emails/day, no port blocking')
       }
     }
   }
@@ -592,9 +650,7 @@ app.post('/api/verify-payment', async (req, res) => {
         itemsHtml = `<tr><td style="padding:8px 0;color:#b8b0d4;">${meta.productName || meta.itemName}</td><td style="padding:8px 0;text-align:right;font-weight:600;" colspan="2">Rs.${meta.productPrice?.toLocaleString() || ''}</td></tr>`
       }
 
-      const storeMailer = createMailer()
-      await storeMailer.sendMail({
-        from:    '"Friends Fitness Club Store" <' + process.env.EMAIL_USER + '>',
+      await sendEmail({
         to:      customerEmail,
         subject: 'Order Confirmed! - FFC Store',
         html: `
@@ -624,8 +680,7 @@ app.post('/api/verify-payment', async (req, res) => {
     <p style="color:#6b6490;font-size:11px;text-align:center;margin-top:18px;">Payment ID: ${razorpay_payment_id}</p>
   </div>
 </div>`,
-      })
-      console.log('Store order email sent to', customerEmail)
+      console.log('✅ Store order email sent to', customerEmail)
     } catch(e) { console.error('Store email failed:', e.message) }
   }
 
@@ -636,10 +691,8 @@ app.post('/api/verify-payment', async (req, res) => {
       const what  = meta?.planLabel  || meta?.productName  || meta?.description || meta?.type || 'Payment'
       const email = meta?.memberEmail || meta?.customerEmail || 'not provided'
       const phone = meta?.memberPhone || meta?.customerPhone || 'not provided'
-      const adminMailer = createMailer()
-      await adminMailer.sendMail({
-        from:    '"FFC Admin" <' + process.env.EMAIL_USER + '>',
-        to:      process.env.EMAIL_USER,
+      await sendEmail({
+        to:      process.env.EMAIL_USER || 'friendsfitnessclub18@gmail.com',
         subject: 'New Payment: ' + who + ' - ' + what,
         html: `<h2>New Payment - FFC</h2>
           <p><b>Name:</b> ${who}</p>
@@ -668,8 +721,7 @@ app.post('/api/contact', async (req, res) => {
   await sendSMS('8484805154', `New FFC enquiry from ${name} (${phone}): ${message.slice(0,80)}`)
   if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     try {
-      const cMailer = createMailer()
-      await cMailer.sendMail({ from:process.env.EMAIL_USER, to:process.env.EMAIL_USER, subject:`New Lead: ${name}`, html:`<h2>New Contact - FFC</h2><p><b>Name:</b> ${name}</p><p><b>Email:</b> ${email}</p><p><b>Phone:</b> ${phone}</p><p><b>Message:</b> ${message}</p>` })
+      await sendEmail({ to: process.env.EMAIL_USER || 'friendsfitnessclub18@gmail.com', subject:`New Lead: ${name}`, html:`<h2>New Contact - FFC</h2><p><b>Name:</b> ${name}</p><p><b>Email:</b> ${email}</p><p><b>Phone:</b> ${phone}</p><p><b>Message:</b> ${message}</p>` })
     } catch(e) { console.error('Contact email error:', e.message) }
   }
   res.json({ success:true })
