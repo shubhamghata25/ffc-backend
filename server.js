@@ -14,18 +14,18 @@ const PORT = process.env.PORT || 4000
 app.use(cors({ origin: '*' }))
 app.use(express.json({ limit: '15mb' }))
 
-/* ════════════════════════════════════════════
-   CLOUDINARY — permanent image storage
-════════════════════════════════════════════ */
+/* 
+   CLOUDINARY - permanent image storage
+ */
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
   api_key:    process.env.CLOUDINARY_API_KEY    || '',
   api_secret: process.env.CLOUDINARY_API_SECRET || '',
 })
 
-/* ════════════════════════════════════════════
+/* 
    ADMIN CREDENTIALS
-════════════════════════════════════════════ */
+ */
 const adminCreds = {
   passwordHash: process.env.ADMIN_PASSWORD_HASH
     || bcrypt.hashSync(process.env.ADMIN_PASSWORD || 'gym@admin123', 10),
@@ -33,11 +33,11 @@ const adminCreds = {
 
 const uid = () => Math.random().toString(36).slice(2, 9)
 
-/* ════════════════════════════════════════════
+/* 
    MONGODB SCHEMAS
    One collection per domain object.
    mongoose handles all persistence.
-════════════════════════════════════════════ */
+ */
 const memberSchema = new mongoose.Schema({
   _uid:    { type:String, default:uid, unique:true },
   name:    String, phone:String, plan:String,
@@ -135,22 +135,22 @@ const Exercise    = mongoose.model('Exercise',     exerciseSchema)
 const Order       = mongoose.model('Order',        orderSchema)
 const Attendance  = mongoose.model('Attendance',   attendanceSchema)
 
-/* ════════════════════════════════════════════
-   SEED — runs once when collections are empty
-════════════════════════════════════════════ */
-/* ════════════════════════════════════════════
-   SEED — uses updateOne + upsert:true
+/* 
+   SEED - runs once when collections are empty
+ */
+/* 
+   SEED - uses updateOne + upsert:true
    This means:
-   - If document with _uid exists → SKIP (never overwrite admin changes)
-   - If document does not exist   → INSERT default
+   - If document with _uid exists -> SKIP (never overwrite admin changes)
+   - If document does not exist   -> INSERT default
    Safe to run on every startup. Admin data is never lost on redeploy.
-════════════════════════════════════════════ */
+ */
 async function upsertOne(Model, _uid, data) {
   await Model.updateOne({ _uid }, { $setOnInsert: { _uid, ...data } }, { upsert:true })
 }
 
 async function seedIfEmpty() {
-  /* Plans — only insert if _uid does not already exist */
+  /* Plans - only insert if _uid does not already exist */
   await upsertOne(Plan, 'plan1', { label:'Monthly',     period:'month',    price:1199, originalPrice:1199, discount:0, discountType:'percent', popular:false, active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes'],                                                                     description:'Perfect for trying out our gym.',   order:1 })
   await upsertOne(Plan, 'plan2', { label:'Quarterly',   period:'3 months', price:2999, originalPrice:2999, discount:0, discountType:'percent', popular:true,  active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes','1 Personal session'],                                              description:'Best value for short-term goals.',  order:2 })
   await upsertOne(Plan, 'plan3', { label:'Half Yearly', period:'6 months', price:4999, originalPrice:4999, discount:0, discountType:'percent', popular:false, active:true, features:['Full gym access','Locker facility','Diet consultation','Group classes','2 Personal sessions','Body analysis'],                          description:'Commit to 6 months and transform.', order:3 })
@@ -177,7 +177,7 @@ async function seedIfEmpty() {
   /* Products */
   await upsertOne(Product, 'p1', { subcategoryId:'sub1', categoryId:'cat1', name:'Whey Protein 1kg',   description:'Premium whey protein.',     price:1599, image:'', inStock:true })
   await upsertOne(Product, 'p2', { subcategoryId:'sub3', categoryId:'cat1', name:'Creatine 500g',       description:'Pure creatine.',            price:999,  image:'', inStock:true })
-  await upsertOne(Product, 'p3', { subcategoryId:'sub4', categoryId:'cat2', name:'Adjustable Dumbbell', description:'5–25kg set.',              price:3499, image:'', inStock:true })
+  await upsertOne(Product, 'p3', { subcategoryId:'sub4', categoryId:'cat2', name:'Adjustable Dumbbell', description:'5-25kg set.',              price:3499, image:'', inStock:true })
   await upsertOne(Product, 'p4', { subcategoryId:'sub5', categoryId:'cat2', name:'Resistance Band Set', description:'5-band home workout set.',  price:699,  image:'', inStock:true })
   await upsertOne(Product, 'p5', { subcategoryId:'sub6', categoryId:'cat3', name:'Gym Gloves',          description:'Anti-slip lifting gloves.', price:349,  image:'', inStock:true })
 
@@ -189,22 +189,22 @@ async function seedIfEmpty() {
   await upsertOne(Exercise, 'e5', { name:'Pull Ups',       muscle:'Back',      level:'Intermediate', description:'Upper body pulling.',      ytLink:'https://www.youtube.com/watch?v=eGo4IYlbE5g', image:'' })
   await upsertOne(Exercise, 'e6', { name:'Shoulder Press', muscle:'Shoulders', level:'Beginner',     description:'Overhead pressing.',       ytLink:'https://www.youtube.com/watch?v=qEwKCR5JCog', image:'' })
 
-  /* Default offer — only if none exist */
-  await upsertOne(Offer, 'o1', { status:'OFF', title:'Summer Flash Sale 💥', description:'Get 20% off on all plans!', btn:'Grab Now', link:'/pricing', poster:'' })
+  /* Default offer - only if none exist */
+  await upsertOne(Offer, 'o1', { status:'OFF', title:'Summer Flash Sale ', description:'Get 20% off on all plans!', btn:'Grab Now', link:'/pricing', poster:'' })
 
   /* Sample members */
-  await upsertOne(Member, 'm1', { name:'Rahul Sharma',  phone:'9876543210', plan:'Monthly – ₹1199',     joined:'2026-01-15', status:'Active',   fee:'Paid'   })
-  await upsertOne(Member, 'm2', { name:'Priya Yadav',   phone:'9812345670', plan:'Half Yearly – ₹4999', joined:'2025-10-01', status:'Active',   fee:'Paid'   })
-  await upsertOne(Member, 'm3', { name:'Amit Kulkarni', phone:'9988776655', plan:'Quarterly – ₹2999',   joined:'2026-02-20', status:'Inactive', fee:'Unpaid' })
+  await upsertOne(Member, 'm1', { name:'Rahul Sharma',  phone:'9876543210', plan:'Monthly - Rs.1199',     joined:'2026-01-15', status:'Active',   fee:'Paid'   })
+  await upsertOne(Member, 'm2', { name:'Priya Yadav',   phone:'9812345670', plan:'Half Yearly - Rs.4999', joined:'2025-10-01', status:'Active',   fee:'Paid'   })
+  await upsertOne(Member, 'm3', { name:'Amit Kulkarni', phone:'9988776655', plan:'Quarterly - Rs.2999',   joined:'2026-02-20', status:'Inactive', fee:'Unpaid' })
 
   /* Sample leads */
   await upsertOne(Lead, 'l1', { name:'Mohit Raut',  email:'mohit@mail.com', phone:'9911223344', message:'Interested in monthly plan', date:'2026-04-05' })
   await upsertOne(Lead, 'l2', { name:'Divya Singh', email:'divya@mail.com', phone:'9933445566', message:'Want personal training',     date:'2026-04-06' })
 
-  console.log('✅ Seed complete — existing admin data preserved')
+  console.log('[OK] Seed complete - existing admin data preserved')
 }
 
-/* ── Helper: convert mongoose doc to plain object with id field ── */
+/*  Helper: convert mongoose doc to plain object with id field  */
 function toObj(doc) {
   if (!doc) return null
   const o = doc.toObject ? doc.toObject() : { ...doc }
@@ -214,9 +214,9 @@ function toObj(doc) {
 }
 function toArr(docs) { return docs.map(toObj) }
 
-/* ════════════════════════════════════════════
+/* 
    HELPERS
-════════════════════════════════════════════ */
+ */
 function ytId(url) {
   if (!url) return ''
   const m = url.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/)
@@ -232,7 +232,7 @@ async function uploadToCloudinary(imageData, folder='ffc') {
   if (!imageData) return ''
   if (imageData.startsWith('https://')) return imageData
   if (!process.env.CLOUDINARY_CLOUD_NAME) {
-    console.warn('⚠️  CLOUDINARY_CLOUD_NAME not set — returning base64')
+    console.warn('[WARN]  CLOUDINARY_CLOUD_NAME not set - returning base64')
     return imageData
   }
   const result = await cloudinary.uploader.upload(imageData, {
@@ -248,7 +248,7 @@ const razorpay = new Razorpay({
 })
 // Mailer created fresh per-send so env vars are always current
 // EMAIL_PASS must be a Gmail App Password (not your login password)
-// Setup: Google Account → Security → 2-Step Verification ON → App Passwords → Generate
+// Setup: Google Account -> Security -> 2-Step Verification ON -> App Passwords -> Generate
 function createMailer() {
   return nodemailer.createTransport({
     host: 'smtp.gmail.com',
@@ -265,7 +265,7 @@ function createMailer() {
   })
 }
 
-// Brevo (formerly Sendinblue) HTTP API — FREE 300 emails/day
+// Brevo (formerly Sendinblue) HTTP API - FREE 300 emails/day
 // Never blocked by Render. Get free key at brevo.com
 // Set BREVO_API_KEY in Render env vars
 async function sendViaBrevo({ to, subject, html, attachments=[] }) {
@@ -292,14 +292,14 @@ async function sendViaBrevo({ to, subject, html, attachments=[] }) {
     body:    JSON.stringify(body),
   })
   const data = await res.json()
-  if (res.ok) { console.log('✅ Email sent via Brevo to', to); return true }
-  console.error('❌ Brevo error:', JSON.stringify(data))
+  if (res.ok) { console.log('[OK] Email sent via Brevo to', to); return true }
+  console.error('[ERROR] Brevo error:', JSON.stringify(data))
   return false
 }
 
 // Master send function: tries Brevo first (no port blocking), falls back to Gmail SMTP
 async function sendEmail({ to, subject, html, attachments=[] }) {
-  // Try Brevo first if API key is set (recommended — no port issues)
+  // Try Brevo first if API key is set (recommended - no port issues)
   if (process.env.BREVO_API_KEY) {
     const sent = await sendViaBrevo({ to, subject, html, attachments }).catch(() => false)
     if (sent) return
@@ -312,16 +312,16 @@ async function sendEmail({ to, subject, html, attachments=[] }) {
       to, subject, html,
       attachments,
     })
-    console.log('✅ Email sent via Gmail SMTP to', to)
+    console.log('[OK] Email sent via Gmail SMTP to', to)
   }
 }
 
 // SMS via Fast2SMS (free Indian SMS, no DLT needed for test mode)
-// Set FAST2SMS_API_KEY in Render env vars — get free key at fast2sms.com
+// Set FAST2SMS_API_KEY in Render env vars - get free key at fast2sms.com
 async function sendSMS(phone, message) {
   const apiKey = process.env.FAST2SMS_API_KEY
   if (!apiKey) { console.warn('SMS skipped: FAST2SMS_API_KEY not set'); return }
-  // Normalize phone — strip +91 or 91 prefix, keep 10 digits
+  // Normalize phone - strip +91 or 91 prefix, keep 10 digits
   const num = String(phone).replace(/^\+?91/, '').replace(/\D/g, '').slice(-10)
   if (num.length !== 10) { console.warn('SMS skipped: invalid phone', phone); return }
   try {
@@ -347,43 +347,43 @@ function adminOnly(req, res, next) {
   next()
 }
 
-/* ════════════════════════════════════════════
+/* 
    CONNECT TO MONGODB THEN START SERVER
-════════════════════════════════════════════ */
+ */
 async function startServer() {
   const MONGO_URI = process.env.MONGODB_URI
   if (!MONGO_URI) {
-    console.error('❌ MONGODB_URI env var is not set! Add it to Render environment variables.')
+    console.error('[ERROR] MONGODB_URI env var is not set! Add it to Render environment variables.')
     console.error('   Get a free URI from https://mongodb.com/atlas (free forever, 512MB)')
     process.exit(1)
   }
   await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 10000 })
-  console.log('✅ MongoDB connected')
+  console.log('[OK] MongoDB connected')
   await seedIfEmpty()
-  app.listen(PORT, () => console.log(`✅ FFC backend on port ${PORT}`))
+  app.listen(PORT, () => console.log(`[OK] FFC backend on port ${PORT}`))
 }
 
-/* ════════════════════════════════════════════
-   KEEP-ALIVE — pings itself every 14 min so
+/* 
+   KEEP-ALIVE - pings itself every 14 min so
    Render never spins down (free tier sleeps
    after 15 min of no traffic)
-════════════════════════════════════════════ */
+ */
 function startKeepAlive() {
   const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`
   setInterval(async () => {
     try {
       await fetch(`${url}/api/health`)
-      console.log('🏓 Keep-alive ping sent')
+      console.log('[PING] Keep-alive ping sent')
     } catch {}
   }, 14 * 60 * 1000)   // every 14 minutes
 }
 
-/* ════════════════════════════════════════════
+/* 
    PUBLIC ROUTES
-════════════════════════════════════════════ */
+ */
 app.get('/api/health', (_req, res) => res.json({ status:'ok', time:new Date().toISOString() }))
 
-/* ── Email diagnostic endpoint ── GET /api/test-email?to=you@gmail.com */
+/*  Email diagnostic endpoint  GET /api/test-email?to=you@gmail.com */
 app.get('/api/test-email', async (req, res) => {
   const to = req.query.to || process.env.EMAIL_USER
   const diagnostics = {
@@ -410,10 +410,10 @@ app.get('/api/test-email', async (req, res) => {
       (e.message.includes('Invalid login') || e.message.includes('535') || e.message.includes('534'))
         ? 'Gmail App Password is wrong. Steps: 1) Go to myaccount.google.com 2) Security 3) App Passwords 4) Generate for Mail 5) Copy 16-char password 6) Update EMAIL_PASS on Render (no spaces)'
       : (e.message.includes('ECONNREFUSED') || e.message.includes('ETIMEDOUT') || e.message.includes('timeout'))
-        ? 'SMTP connection timed out — port 587 may also be blocked on Render. Contact Render support or use a different email service.'
+        ? 'SMTP connection timed out - port 587 may also be blocked on Render. Contact Render support or use a different email service.'
       : (e.message.includes('self signed') || e.message.includes('certificate'))
-        ? 'TLS certificate error — already handled in config, redeploy and try again'
-      : 'Unknown error — check full error message above'
+        ? 'TLS certificate error - already handled in config, redeploy and try again'
+      : 'Unknown error - check full error message above'
     })
   }
 })
@@ -467,9 +467,9 @@ app.get('/api/products', async (_req, res) => {
   } catch { res.json([]) }
 })
 
-/* ════════════════════════════════════════════
-   IMAGE UPLOAD → Cloudinary
-════════════════════════════════════════════ */
+/* 
+   IMAGE UPLOAD -> Cloudinary
+ */
 app.post('/api/upload', adminOnly, async (req, res) => {
   const { image, folder } = req.body
   if (!image) return res.status(400).json({ error:'No image provided' })
@@ -479,9 +479,9 @@ app.post('/api/upload', adminOnly, async (req, res) => {
   } catch(err) { res.status(500).json({ error:err.message }) }
 })
 
-/* ════════════════════════════════════════════
+/* 
    ADMIN PASSWORD
-════════════════════════════════════════════ */
+ */
 app.post('/api/admin/verify-password', adminOnly, async (req, res) => {
   const valid = await bcrypt.compare(req.body.password||'', adminCreds.passwordHash)
   res.json({ valid })
@@ -496,9 +496,9 @@ app.post('/api/admin/change-password', adminOnly, async (req, res) => {
   res.json({ success:true })
 })
 
-/* ════════════════════════════════════════════
+/* 
    PAYMENT
-════════════════════════════════════════════ */
+ */
 app.post('/api/create-order', async (req, res) => {
   try {
     const { amount, type, itemId, itemName } = req.body
@@ -553,9 +553,9 @@ app.post('/api/verify-payment', async (req, res) => {
   }
 
   // 4b. Send confirmation email with QR attached
-  // Runs even if member auto-create failed — email is always attempted
+  // Runs even if member auto-create failed - email is always attempted
   const emailTo = meta?.memberEmail || ''
-  console.log('Email check — to:', emailTo, '| EMAIL_USER set:', !!process.env.EMAIL_USER, '| EMAIL_PASS set:', !!process.env.EMAIL_PASS)
+  console.log('Email check - to:', emailTo, '| EMAIL_USER set:', !!process.env.EMAIL_USER, '| EMAIL_PASS set:', !!process.env.EMAIL_PASS)
   if (emailTo && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     try {
       const QRCode    = (await import('qrcode')).default
@@ -605,20 +605,20 @@ app.post('/api/verify-payment', async (req, res) => {
   </div>
 </div>`,
       })
-      console.log('✅ Confirmation email sent successfully to', emailTo)
+      console.log('[OK] Confirmation email sent successfully to', emailTo)
     } catch(e) {
-      console.error('❌ EMAIL SEND FAILED:', e.message)
-      console.error('❌ EMAIL ERROR CODE:', e.code || 'none')
-      console.error('❌ EMAIL_USER used:', process.env.EMAIL_USER)
+      console.error('[ERROR] EMAIL SEND FAILED:', e.message)
+      console.error('[ERROR] EMAIL ERROR CODE:', e.code || 'none')
+      console.error('[ERROR] EMAIL_USER used:', process.env.EMAIL_USER)
       if (e.message.includes('Invalid login') || e.message.includes('535') || e.message.includes('534')) {
-        console.error('❌ FIX: Gmail App Password wrong → myaccount.google.com → Security → App Passwords → regenerate → update Render EMAIL_PASS')
+        console.error('[ERROR] FIX: Gmail App Password wrong -> myaccount.google.com -> Security -> App Passwords -> regenerate -> update Render EMAIL_PASS')
       } else if (e.message.includes('timeout') || e.message.includes('ECONNREFUSED')) {
-        console.error('❌ FIX: Render is blocking SMTP port. Use Brevo (formerly Sendinblue) instead — free 300 emails/day, no port blocking')
+        console.error('[ERROR] FIX: Render is blocking SMTP port. Use Brevo (formerly Sendinblue) instead - free 300 emails/day, no port blocking')
       }
     }
   }
 
-  // 5. Store order confirmation — SMS + email
+  // 5. Store order confirmation - SMS + email
   const isStore = meta?.type === 'store_product' || meta?.type === 'store_cart'
 
   // SMS for store
@@ -680,7 +680,7 @@ app.post('/api/verify-payment', async (req, res) => {
     <p style="color:#6b6490;font-size:11px;text-align:center;margin-top:18px;">Payment ID: ${razorpay_payment_id}</p>
   </div>
 </div>`,
-      console.log('✅ Store order email sent to', customerEmail)
+      console.log('[OK] Store order email sent to', customerEmail)
     } catch(e) { console.error('Store email failed:', e.message) }
   }
 
@@ -702,7 +702,7 @@ app.post('/api/verify-payment', async (req, res) => {
           <p><b>Item:</b> ${what}</p>
           <p><b>Amount:</b> Rs.${meta?.planPrice || meta?.productPrice || meta?.totalAmount || meta?.amount || ''}</p>
           <p><b>Payment ID:</b> ${razorpay_payment_id}</p>
-          <p><b>Member Created:</b> ${newMember ? 'Yes — ' + newMember._uid : 'N/A'}</p>`,
+          <p><b>Member Created:</b> ${newMember ? 'Yes - ' + newMember._uid : 'N/A'}</p>`,
       })
     } catch {}
   }
@@ -710,9 +710,9 @@ app.post('/api/verify-payment', async (req, res) => {
   res.json({ success:true, order:toObj(order), memberCreated:!!newMember })
 })
 
-/* ════════════════════════════════════════════
+/* 
    CONTACT
-════════════════════════════════════════════ */
+ */
 app.post('/api/contact', async (req, res) => {
   const { name, email, phone, message } = req.body
   if (!name||!email||!phone||!message) return res.status(400).json({ error:'All fields required' })
@@ -727,39 +727,39 @@ app.post('/api/contact', async (req, res) => {
   res.json({ success:true })
 })
 
-/* ════════════════════════════════════════════
-   ADMIN — Members
-════════════════════════════════════════════ */
+/* 
+   ADMIN - Members
+ */
 app.get('/api/admin/members',        adminOnly, async (_req,res) => { try{ res.json(toArr(await Member.find().sort('-createdAt'))) }catch{ res.json([]) } })
 app.post('/api/admin/members',       adminOnly, async (req,res) => { try{ const m=await Member.create({...req.body,_uid:uid()}); res.json(toObj(m)) }catch(e){ res.status(500).json({error:e.message}) } })
 app.put('/api/admin/members/:id',    adminOnly, async (req,res) => { try{ await Member.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 app.delete('/api/admin/members/:id', adminOnly, async (req,res) => { try{ await Member.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
-/* ════════════════════════════════════════════
-   ADMIN — Leads
-════════════════════════════════════════════ */
+/* 
+   ADMIN - Leads
+ */
 app.get('/api/admin/leads',          adminOnly, async (_req,res) => { try{ res.json(toArr(await Lead.find().sort('-createdAt'))) }catch{ res.json([]) } })
 app.delete('/api/admin/leads/:id',   adminOnly, async (req,res) => { try{ await Lead.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
-/* ════════════════════════════════════════════
-   ADMIN — Offers  (poster URL stored in MongoDB)
-════════════════════════════════════════════ */
+/* 
+   ADMIN - Offers  (poster URL stored in MongoDB)
+ */
 app.get('/api/admin/offers',         adminOnly, async (_req,res) => { try{ res.json(toArr(await Offer.find().sort('-createdAt'))) }catch{ res.json([]) } })
 app.post('/api/admin/offers',        adminOnly, async (req,res) => { try{ const o=await Offer.create({...req.body,_uid:uid()}); res.json(toObj(o)) }catch(e){ res.status(500).json({error:e.message}) } })
 app.put('/api/admin/offers/:id',     adminOnly, async (req,res) => { try{ await Offer.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 app.delete('/api/admin/offers/:id',  adminOnly, async (req,res) => { try{ await Offer.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
-/* ════════════════════════════════════════════
-   ADMIN — Trainers  (photo URL stored in MongoDB)
-════════════════════════════════════════════ */
+/* 
+   ADMIN - Trainers  (photo URL stored in MongoDB)
+ */
 app.get('/api/admin/trainers',        adminOnly, async (_req,res) => { try{ res.json(toArr(await Trainer.find().sort('name'))) }catch{ res.json([]) } })
 app.post('/api/admin/trainers',       adminOnly, async (req,res) => { try{ const t=await Trainer.create({...req.body,_uid:uid()}); res.json(toObj(t)) }catch(e){ res.status(500).json({error:e.message}) } })
 app.put('/api/admin/trainers/:id',    adminOnly, async (req,res) => { try{ await Trainer.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 app.delete('/api/admin/trainers/:id', adminOnly, async (req,res) => { try{ await Trainer.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
-/* ════════════════════════════════════════════
-   ADMIN — Plans
-════════════════════════════════════════════ */
+/* 
+   ADMIN - Plans
+ */
 app.get('/api/admin/plans', adminOnly, async (_req,res) => {
   try {
     const plans = await Plan.find().sort('order')
@@ -783,10 +783,10 @@ app.put('/api/admin/plans/:id', adminOnly, async (req,res) => {
 })
 app.delete('/api/admin/plans/:id', adminOnly, async (req,res) => { try{ await Plan.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
-/* ════════════════════════════════════════════
-   ADMIN — Store: Categories, Subcategories, Products
+/* 
+   ADMIN - Store: Categories, Subcategories, Products
    All image URLs stored permanently in MongoDB
-════════════════════════════════════════════ */
+ */
 app.get('/api/admin/store', adminOnly, async (_req,res) => {
   try {
     const [cats,subs,prods] = await Promise.all([Category.find().sort('order'),Subcategory.find().sort('order'),Product.find()])
@@ -809,19 +809,19 @@ app.post('/api/admin/store/products',       adminOnly, async (req,res) => { try{
 app.put('/api/admin/store/products/:id',    adminOnly, async (req,res) => { try{ await Product.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 app.delete('/api/admin/store/products/:id', adminOnly, async (req,res) => { try{ await Product.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
-/* ════════════════════════════════════════════
-   ADMIN — Exercises  (image URLs in MongoDB)
-════════════════════════════════════════════ */
+/* 
+   ADMIN - Exercises  (image URLs in MongoDB)
+ */
 app.get('/api/admin/exercises',        adminOnly, async (_req,res) => { try{ res.json(toArr(await Exercise.find())) }catch{ res.json([]) } })
 app.post('/api/admin/exercises',       adminOnly, async (req,res) => { try{ const e=await Exercise.create({...req.body,_uid:uid()}); res.json(toObj(e)) }catch(e){ res.status(500).json({error:e.message}) } })
 app.put('/api/admin/exercises/:id',    adminOnly, async (req,res) => { try{ await Exercise.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 app.delete('/api/admin/exercises/:id', adminOnly, async (req,res) => { try{ await Exercise.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
-/* ════════════════════════════════════════════
-   ADMIN — Attendance (QR scan)
-════════════════════════════════════════════ */
+/* 
+   ADMIN - Attendance (QR scan)
+ */
 
-// POST /api/admin/attendance/scan — called by QRScanner component
+// POST /api/admin/attendance/scan - called by QRScanner component
 app.post('/api/admin/attendance/scan', adminOnly, async (req, res) => {
   try {
     const { memberId } = req.body
@@ -849,13 +849,13 @@ app.post('/api/admin/attendance/scan', adminOnly, async (req, res) => {
 
     res.json({ success:true, code:'OK', memberName:member.name, message:'Welcome, ' + member.name + '! Attendance marked.' })
   } catch(e) {
-    if (e.code === 11000) // duplicate key — race condition
+    if (e.code === 11000) // duplicate key - race condition
       return res.json({ success:false, code:'ALREADY', message:'Already checked in today.' })
     res.status(500).json({ success:false, message:e.message })
   }
 })
 
-// GET /api/admin/attendance/today — today's check-in log
+// GET /api/admin/attendance/today - today's check-in log
 app.get('/api/admin/attendance/today', adminOnly, async (_req, res) => {
   try {
     const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
@@ -864,7 +864,7 @@ app.get('/api/admin/attendance/today', adminOnly, async (_req, res) => {
   } catch { res.json([]) }
 })
 
-// GET /api/admin/members/expiring — members expiring within 10 days
+// GET /api/admin/members/expiring - members expiring within 10 days
 app.get('/api/admin/members/expiring', adminOnly, async (_req, res) => {
   try {
     const todayIST    = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
@@ -876,7 +876,7 @@ app.get('/api/admin/members/expiring', adminOnly, async (_req, res) => {
     for (const m of allActive) {
       let endStr = m.endDate || ''
       if (!endStr || !endStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-        const planLabel = (m.plan || '').split(/[-–]/)[0].trim()
+        const planLabel = (m.plan || '').split(/[--]/)[0].trim()
         const days = DAYS[planLabel]
         if (!days || !m.joined) continue
         endStr = new Date(new Date(m.joined).getTime() + days * 86400000)
@@ -892,14 +892,14 @@ app.get('/api/admin/members/expiring', adminOnly, async (_req, res) => {
   } catch(e) { res.status(500).json({ error:e.message }) }
 })
 
-/* ════════════════════════════════════════════
-   ADMIN — Orders
-════════════════════════════════════════════ */
+/* 
+   ADMIN - Orders
+ */
 app.get('/api/admin/orders', adminOnly, async (_req,res) => { try{ res.json(toArr(await Order.find().sort('-createdAt'))) }catch{ res.json([]) } })
 
-/* ════════════════════════════════════════════
+/* 
    START
-════════════════════════════════════════════ */
+ */
 startServer()
   .then(() => startKeepAlive())
-  .catch(err => { console.error('❌ Startup failed:', err.message); process.exit(1) })
+  .catch(err => { console.error('[ERROR] Startup failed:', err.message); process.exit(1) })
