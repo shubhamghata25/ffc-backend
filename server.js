@@ -329,6 +329,34 @@ function startKeepAlive() {
 ════════════════════════════════════════════ */
 app.get('/api/health', (_req, res) => res.json({ status:'ok', time:new Date().toISOString() }))
 
+/* ── Email diagnostic endpoint ── GET /api/test-email?to=you@gmail.com */
+app.get('/api/test-email', async (req, res) => {
+  const to = req.query.to || process.env.EMAIL_USER
+  const diagnostics = {
+    EMAIL_USER_set:  !!process.env.EMAIL_USER,
+    EMAIL_PASS_set:  !!process.env.EMAIL_PASS,
+    EMAIL_USER:      process.env.EMAIL_USER || 'NOT SET',
+    sending_to:      to,
+  }
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    return res.json({ success:false, diagnostics, error:'EMAIL_USER or EMAIL_PASS not set in environment variables' })
+  }
+  try {
+    const m = createMailer()
+    await m.verify()
+    diagnostics.smtp_verify = 'PASSED'
+    await m.sendMail({
+      from:    '"FFC Test" <' + process.env.EMAIL_USER + '>',
+      to,
+      subject: 'FFC Email Test - ' + new Date().toLocaleTimeString('en-IN'),
+      html:    '<h2>Email is working!</h2><p>FFC backend can send emails successfully.</p><p>Time: ' + new Date().toISOString() + '</p>',
+    })
+    res.json({ success:true, diagnostics, message: 'Test email sent to ' + to })
+  } catch(e) {
+    res.json({ success:false, diagnostics, error: e.message, hint: e.message.includes('Invalid login') || e.message.includes('535') ? 'Gmail App Password is wrong. Go to myaccount.google.com → Security → App Passwords → generate one and update EMAIL_PASS on Render' : e.message.includes('ECONNREFUSED') || e.message.includes('ETIMEDOUT') ? 'Cannot connect to Gmail SMTP. Render free tier may block port 465. Trying port 587.' : 'Check Render logs for details' })
+  }
+})
+
 app.get('/api/offer', async (_req, res) => {
   try {
     const o = await Offer.findOne({ status:'ON' })
@@ -464,20 +492,24 @@ app.post('/api/verify-payment', async (req, res) => {
   }
 
   // 4b. Send confirmation email with QR attached
-  if (newMember && meta?.memberEmail && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+  // Runs even if member auto-create failed — email is always attempted
+  const emailTo = meta?.memberEmail || ''
+  console.log('Email check — to:', emailTo, '| EMAIL_USER set:', !!process.env.EMAIL_USER, '| EMAIL_PASS set:', !!process.env.EMAIL_PASS)
+  if (emailTo && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     try {
-      const QRCode   = (await import('qrcode')).default
-      const qrPayload = JSON.stringify({ id: newMember._uid, gym: 'FFC' })
+      const QRCode    = (await import('qrcode')).default
+      const memberId  = newMember?._uid || 'guest'
+      const qrPayload = JSON.stringify({ id: memberId, gym: 'FFC' })
       const qrDataUrl = await QRCode.toDataURL(qrPayload, { width:280, margin:2, color:{ dark:'#111111', light:'#ffffff' } })
       const qrBase64  = qrDataUrl.replace(/^data:image\/png;base64,/, '')
 
       const planDisplay  = meta.planLabel || 'Membership'
       const priceDisplay = meta.planPrice ? 'Rs.' + meta.planPrice : ''
-      const endDisplay   = newMember.endDate || ''
+      const endDisplay   = newMember?.endDate || ''
+      const memberName   = meta.memberName || 'Member'
 
+      console.log('Sending membership email to:', emailTo)
       const mailer = createMailer()
-      // Verify SMTP before sending
-      await mailer.verify()
       await mailer.sendMail({
         from:    '"Friends Fitness Club" <' + process.env.EMAIL_USER + '>',
         to:      meta.memberEmail,
@@ -489,7 +521,7 @@ app.post('/api/verify-payment', async (req, res) => {
     <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:13px;letter-spacing:2px;">FRIENDS FITNESS CLUB</p>
   </div>
   <div style="padding:32px;">
-    <h2 style="color:#bb86fc;margin-top:0;">Welcome, ${meta.memberName}!</h2>
+    <h2 style="color:#bb86fc;margin-top:0;">Welcome, ${memberName}!</h2>
     <p style="color:#b8b0d4;">Your membership is now <strong style="color:#22c55e;">active</strong>.</p>
     <table style="width:100%;border-collapse:collapse;margin:20px 0;">
       <tr style="border-bottom:1px solid #2a2347;"><td style="padding:10px 0;color:#6b6490;">Plan</td><td style="padding:10px 0;font-weight:600;">${planDisplay}</td></tr>
@@ -517,8 +549,15 @@ app.post('/api/verify-payment', async (req, res) => {
           encoding:'base64', cid:'qrcode', contentType:'image/png',
         }],
       })
-      console.log('Confirmation email sent to', meta.memberEmail)
-    } catch(e) { console.error('Email send failed:', e.message) }
+      console.log('Confirmation email sent successfully to', emailTo)
+    } catch(e) {
+      console.error('EMAIL SEND FAILED:', e.message)
+      console.error('EMAIL ERROR CODE:', e.code)
+      console.error('EMAIL_USER:', process.env.EMAIL_USER)
+      if (e.message.includes('Invalid login') || e.message.includes('535') || e.message.includes('534')) {
+        console.error('FIX: Go to myaccount.google.com → Security → App Passwords → generate new password → update EMAIL_PASS on Render')
+      }
+    }
   }
 
   // 5. Store order confirmation — SMS + email
@@ -554,7 +593,6 @@ app.post('/api/verify-payment', async (req, res) => {
       }
 
       const storeMailer = createMailer()
-      await storeMailer.verify()
       await storeMailer.sendMail({
         from:    '"Friends Fitness Club Store" <' + process.env.EMAIL_USER + '>',
         to:      customerEmail,
