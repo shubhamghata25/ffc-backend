@@ -680,6 +680,7 @@ app.post('/api/verify-payment', async (req, res) => {
     <p style="color:#6b6490;font-size:11px;text-align:center;margin-top:18px;">Payment ID: ${razorpay_payment_id}</p>
   </div>
 </div>`,
+      })
       console.log('[OK] Store order email sent to', customerEmail)
     } catch(e) { console.error('Store email failed:', e.message) }
   }
