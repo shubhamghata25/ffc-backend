@@ -246,9 +246,47 @@ const razorpay = new Razorpay({
   key_id:     process.env.RAZORPAY_KEY_ID     || 'rzp_test_placeholder',
   key_secret: process.env.RAZORPAY_KEY_SECRET || 'placeholder',
 })
-const mailer = nodemailer.createTransport({
-  service:'gmail', auth:{ user:process.env.EMAIL_USER, pass:process.env.EMAIL_PASS },
-})
+// Mailer created fresh per-send so env vars are always current
+// EMAIL_PASS must be a Gmail App Password (not your login password)
+// Setup: Google Account → Security → 2-Step Verification ON → App Passwords → Generate
+function createMailer() {
+  return nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    tls: { rejectUnauthorized: false },
+  })
+}
+
+// SMS via Fast2SMS (free Indian SMS, no DLT needed for test mode)
+// Set FAST2SMS_API_KEY in Render env vars — get free key at fast2sms.com
+async function sendSMS(phone, message) {
+  const apiKey = process.env.FAST2SMS_API_KEY
+  if (!apiKey) { console.warn('SMS skipped: FAST2SMS_API_KEY not set'); return }
+  // Normalize phone — strip +91 or 91 prefix, keep 10 digits
+  const num = String(phone).replace(/^\+?91/, '').replace(/\D/g, '').slice(-10)
+  if (num.length !== 10) { console.warn('SMS skipped: invalid phone', phone); return }
+  try {
+    const res = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+      method: 'POST',
+      headers: { 'authorization': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        route: 'q',           // transactional route
+        message,
+        language: 'english',
+        flash: 0,
+        numbers: num,
+      }),
+    })
+    const data = await res.json()
+    if (data.return) console.log('SMS sent to', num)
+    else console.warn('SMS failed:', JSON.stringify(data))
+  } catch(e) { console.error('SMS error:', e.message) }
+}
 function adminOnly(req, res, next) {
   if (req.headers['x-admin-key'] !== (process.env.ADMIN_SECRET||'ffc-admin-secret-2026'))
     return res.status(401).json({ error:'Unauthorized' })
@@ -418,7 +456,14 @@ app.post('/api/verify-payment', async (req, res) => {
     }
   } catch(e) { console.error('Member auto-create error:', e.message) }
 
-  // 4. Send confirmation email with QR attached
+  // 4a. Send SMS confirmation to member
+  const memberPhone = meta?.memberPhone || ''
+  if (newMember && memberPhone) {
+    const smsMsg = `Welcome to Friends Fitness Club! Your ${meta.planLabel || 'membership'} is now ACTIVE. Valid till ${newMember.endDate}. Your QR attendance code has been sent to your email. Gym: +91 84848 05154`
+    await sendSMS(memberPhone, smsMsg)
+  }
+
+  // 4b. Send confirmation email with QR attached
   if (newMember && meta?.memberEmail && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     try {
       const QRCode   = (await import('qrcode')).default
@@ -426,10 +471,13 @@ app.post('/api/verify-payment', async (req, res) => {
       const qrDataUrl = await QRCode.toDataURL(qrPayload, { width:280, margin:2, color:{ dark:'#111111', light:'#ffffff' } })
       const qrBase64  = qrDataUrl.replace(/^data:image\/png;base64,/, '')
 
-      const planDisplay = meta.planLabel || 'Membership'
+      const planDisplay  = meta.planLabel || 'Membership'
       const priceDisplay = meta.planPrice ? 'Rs.' + meta.planPrice : ''
       const endDisplay   = newMember.endDate || ''
 
+      const mailer = createMailer()
+      // Verify SMTP before sending
+      await mailer.verify()
       await mailer.sendMail({
         from:    '"Friends Fitness Club" <' + process.env.EMAIL_USER + '>',
         to:      meta.memberEmail,
@@ -473,8 +521,18 @@ app.post('/api/verify-payment', async (req, res) => {
     } catch(e) { console.error('Email send failed:', e.message) }
   }
 
-  // 5. Store order confirmation email (product or cart)
+  // 5. Store order confirmation — SMS + email
   const isStore = meta?.type === 'store_product' || meta?.type === 'store_cart'
+
+  // SMS for store
+  if (isStore && meta?.customerPhone) {
+    const itemDesc = meta.type === 'store_cart'
+      ? `cart order (Rs.${meta.totalAmount})`
+      : `${meta.productName || meta.itemName} (Rs.${meta.productPrice})`
+    const smsMsg = `FFC Store: Your order for ${itemDesc} is confirmed! Payment ID: ${razorpay_payment_id}. We will contact you for delivery. Call: +91 84848 05154`
+    await sendSMS(meta.customerPhone, smsMsg)
+  }
+
   if (isStore && meta?.customerEmail && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     try {
       const customerName  = meta.customerName  || 'Customer'
@@ -495,7 +553,9 @@ app.post('/api/verify-payment', async (req, res) => {
         itemsHtml = `<tr><td style="padding:8px 0;color:#b8b0d4;">${meta.productName || meta.itemName}</td><td style="padding:8px 0;text-align:right;font-weight:600;" colspan="2">Rs.${meta.productPrice?.toLocaleString() || ''}</td></tr>`
       }
 
-      await mailer.sendMail({
+      const storeMailer = createMailer()
+      await storeMailer.verify()
+      await storeMailer.sendMail({
         from:    '"Friends Fitness Club Store" <' + process.env.EMAIL_USER + '>',
         to:      customerEmail,
         subject: 'Order Confirmed! - FFC Store',
@@ -538,7 +598,8 @@ app.post('/api/verify-payment', async (req, res) => {
       const what  = meta?.planLabel  || meta?.productName  || meta?.description || meta?.type || 'Payment'
       const email = meta?.memberEmail || meta?.customerEmail || 'not provided'
       const phone = meta?.memberPhone || meta?.customerPhone || 'not provided'
-      await mailer.sendMail({
+      const adminMailer = createMailer()
+      await adminMailer.sendMail({
         from:    '"FFC Admin" <' + process.env.EMAIL_USER + '>',
         to:      process.env.EMAIL_USER,
         subject: 'New Payment: ' + who + ' - ' + what,
@@ -565,9 +626,13 @@ app.post('/api/contact', async (req, res) => {
   const { name, email, phone, message } = req.body
   if (!name||!email||!phone||!message) return res.status(400).json({ error:'All fields required' })
   const lead = await Lead.create({ _uid:uid(), name, email, phone, message, date:new Date().toISOString().slice(0,10) })
-  if (process.env.EMAIL_USER&&process.env.EMAIL_PASS) {
-    try { await mailer.sendMail({ from:process.env.EMAIL_USER, to:process.env.EMAIL_USER, subject:`🏋 New Lead: ${name}`, html:`<h2>New Contact – FFC</h2><p><b>Name:</b>${name}</p><p><b>Email:</b>${email}</p><p><b>Phone:</b>${phone}</p><p><b>Message:</b>${message}</p>` }) }
-    catch {}
+  // SMS to admin about new lead
+  await sendSMS('8484805154', `New FFC enquiry from ${name} (${phone}): ${message.slice(0,80)}`)
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    try {
+      const cMailer = createMailer()
+      await cMailer.sendMail({ from:process.env.EMAIL_USER, to:process.env.EMAIL_USER, subject:`New Lead: ${name}`, html:`<h2>New Contact - FFC</h2><p><b>Name:</b> ${name}</p><p><b>Email:</b> ${email}</p><p><b>Phone:</b> ${phone}</p><p><b>Message:</b> ${message}</p>` })
+    } catch(e) { console.error('Contact email error:', e.message) }
   }
   res.json({ success:true })
 })

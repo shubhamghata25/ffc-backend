@@ -38,3 +38,5 @@ services:
         sync: false
       - key: GOOGLE_SHEET_ID
         sync: false
+      - key: FAST2SMS_API_KEY
+        sync: false
