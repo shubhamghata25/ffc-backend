@@ -473,20 +473,84 @@ app.post('/api/verify-payment', async (req, res) => {
     } catch(e) { console.error('Email send failed:', e.message) }
   }
 
-  // 5. Admin notification email
-  if (process.env.EMAIL_USER && process.env.EMAIL_PASS && meta?.memberName) {
+  // 5. Store order confirmation email (product or cart)
+  const isStore = meta?.type === 'store_product' || meta?.type === 'store_cart'
+  if (isStore && meta?.customerEmail && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     try {
+      const customerName  = meta.customerName  || 'Customer'
+      const customerEmail = meta.customerEmail
+      const isCart        = meta.type === 'store_cart'
+
+      let itemsHtml = ''
+      if (isCart && Array.isArray(meta.items)) {
+        itemsHtml = meta.items.map(i =>
+          `<tr style="border-bottom:1px solid #2a2347;">
+            <td style="padding:8px 0;color:#b8b0d4;">${i.name}</td>
+            <td style="padding:8px 0;text-align:center;color:#b8b0d4;">x${i.qty}</td>
+            <td style="padding:8px 0;text-align:right;font-weight:600;">Rs.${(i.price * i.qty).toLocaleString()}</td>
+          </tr>`
+        ).join('')
+        itemsHtml += `<tr><td colspan="2" style="padding:10px 0;font-weight:700;">Total</td><td style="padding:10px 0;text-align:right;font-weight:700;color:#bb86fc;">Rs.${meta.totalAmount?.toLocaleString() || ''}</td></tr>`
+      } else {
+        itemsHtml = `<tr><td style="padding:8px 0;color:#b8b0d4;">${meta.productName || meta.itemName}</td><td style="padding:8px 0;text-align:right;font-weight:600;" colspan="2">Rs.${meta.productPrice?.toLocaleString() || ''}</td></tr>`
+      }
+
+      await mailer.sendMail({
+        from:    '"Friends Fitness Club Store" <' + process.env.EMAIL_USER + '>',
+        to:      customerEmail,
+        subject: 'Order Confirmed! - FFC Store',
+        html: `
+<div style="font-family:Arial,sans-serif;max-width:540px;margin:0 auto;background:#06050f;color:#f0eeff;border-radius:16px;overflow:hidden;">
+  <div style="background:linear-gradient(135deg,#7c3aed,#9c59f7);padding:28px;text-align:center;">
+    <h1 style="margin:0;font-size:28px;letter-spacing:3px;color:#fff;">FFC STORE</h1>
+    <p style="margin:6px 0 0;color:rgba(255,255,255,0.85);font-size:13px;">Order Confirmed</p>
+  </div>
+  <div style="padding:28px;">
+    <h2 style="color:#bb86fc;margin-top:0;">Thank you, ${customerName}!</h2>
+    <p style="color:#b8b0d4;margin-bottom:20px;">Your order has been placed successfully. We'll contact you shortly to arrange delivery.</p>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+      <tr style="border-bottom:2px solid #2a2347;">
+        <th style="padding:8px 0;text-align:left;color:#6b6490;font-size:12px;">ITEM</th>
+        <th style="padding:8px 0;text-align:center;color:#6b6490;font-size:12px;">QTY</th>
+        <th style="padding:8px 0;text-align:right;color:#6b6490;font-size:12px;">PRICE</th>
+      </tr>
+      ${itemsHtml}
+    </table>
+    <div style="background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.25);border-radius:10px;padding:14px;">
+      <p style="margin:0;font-size:13px;color:#b8b0d4;line-height:1.8;">
+        For queries, contact us:<br/>
+        WhatsApp / Call: +91 84848 05154<br/>
+        Address: RT Complex 2nd Floor, Wardhaman Nagar, Nagpur
+      </p>
+    </div>
+    <p style="color:#6b6490;font-size:11px;text-align:center;margin-top:18px;">Payment ID: ${razorpay_payment_id}</p>
+  </div>
+</div>`,
+      })
+      console.log('Store order email sent to', customerEmail)
+    } catch(e) { console.error('Store email failed:', e.message) }
+  }
+
+  // 6. Admin notification for ANY payment
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    try {
+      const who   = meta?.memberName || meta?.customerName || 'Unknown'
+      const what  = meta?.planLabel  || meta?.productName  || meta?.description || meta?.type || 'Payment'
+      const email = meta?.memberEmail || meta?.customerEmail || 'not provided'
+      const phone = meta?.memberPhone || meta?.customerPhone || 'not provided'
       await mailer.sendMail({
         from:    '"FFC Admin" <' + process.env.EMAIL_USER + '>',
         to:      process.env.EMAIL_USER,
-        subject: 'New Payment: ' + meta.memberName + ' - ' + (meta.planLabel || 'Membership'),
-        html:`<h2>New Membership Payment</h2>
-          <p><b>Name:</b> ${meta.memberName}</p>
-          <p><b>Phone:</b> ${meta.memberPhone}</p>
-          <p><b>Email:</b> ${meta.memberEmail || 'not provided'}</p>
-          <p><b>Plan:</b> ${meta.planLabel} - Rs.${meta.planPrice}</p>
+        subject: 'New Payment: ' + who + ' - ' + what,
+        html: `<h2>New Payment - FFC</h2>
+          <p><b>Name:</b> ${who}</p>
+          <p><b>Phone:</b> ${phone}</p>
+          <p><b>Email:</b> ${email}</p>
+          <p><b>Type:</b> ${meta?.type || 'unknown'}</p>
+          <p><b>Item:</b> ${what}</p>
+          <p><b>Amount:</b> Rs.${meta?.planPrice || meta?.productPrice || meta?.totalAmount || meta?.amount || ''}</p>
           <p><b>Payment ID:</b> ${razorpay_payment_id}</p>
-          <p><b>Member ID:</b> ${newMember?._uid || 'auto-create failed'}</p>`,
+          <p><b>Member Created:</b> ${newMember ? 'Yes — ' + newMember._uid : 'N/A'}</p>`,
       })
     } catch {}
   }
