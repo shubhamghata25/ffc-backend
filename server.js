@@ -418,6 +418,19 @@ app.get('/api/test-email', async (req, res) => {
   }
 })
 
+app.get('/api/debug-keys', (_req, res) => {
+  const brevo = process.env.BREVO_API_KEY || ''
+  res.json({
+    BREVO_KEY_length:           brevo.length,
+    BREVO_KEY_first12:          brevo.slice(0, 12),
+    BREVO_KEY_last6:            brevo.slice(-6),
+    BREVO_starts_with_xkeysib: brevo.startsWith('xkeysib-'),
+    BREVO_has_spaces:           brevo.includes(' '),
+    EMAIL_USER:                 process.env.EMAIL_USER || 'not set',
+  })
+})
+
+
 app.get('/api/offer', async (_req, res) => {
   try {
     const o = await Offer.findOne({ status:'ON' })
