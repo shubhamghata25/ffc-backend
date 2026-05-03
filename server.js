@@ -666,6 +666,63 @@ app.post('/api/verify-payment', paymentLimiter, async (req, res) => {
 })
 
 /* ═══════════════════════════════════════════════════
+   KIOSK ROUTES  — 24/7 attendance scanner
+   Protected by KIOSK_TOKEN header only (no JWT needed)
+   so the tablet never needs to log in or refresh.
+   ═══════════════════════════════════════════════════ */
+
+function kioskOnly(req, res, next) {
+  const KIOSK_TOKEN = process.env.KIOSK_TOKEN
+  if (!KIOSK_TOKEN) {
+    console.warn('[WARN] KIOSK_TOKEN not set — kiosk endpoints are unprotected!')
+    return next()
+  }
+  if (req.headers['x-kiosk-token'] !== KIOSK_TOKEN)
+    return res.status(401).json({ error: 'Invalid kiosk token' })
+  next()
+}
+
+app.post('/api/kiosk/scan', kioskOnly, async (req, res) => {
+  try {
+    const { memberId } = req.body
+    if (!memberId) return res.status(400).json({ success:false, code:'ERROR', message:'Missing member ID.' })
+
+    const member = await Member.findOne({ _uid: memberId })
+    if (!member) return res.json({ success:false, code:'NOT_FOUND', message:'Member not found. Please contact reception.' })
+
+    const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+
+    if (member.endDate && member.endDate < todayIST)
+      return res.json({ success:false, code:'EXPIRED', memberName:member.name, plan:member.plan, message:`Membership expired on ${member.endDate}. Please renew at reception.` })
+
+    const already = await Attendance.findOne({ memberId, scanDate:todayIST })
+    if (already)
+      return res.json({ success:false, code:'ALREADY', memberName:member.name, plan:member.plan, message:`Already checked in today at ${already.time}. Welcome back!` })
+
+    const timeIST = new Date().toLocaleTimeString('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit' })
+    await Attendance.create({ _uid:uid(), memberId, scanDate:todayIST, time:timeIST, memberName:member.name, phone:member.phone, plan:member.plan })
+
+    if (process.env.FAST2SMS_API_KEY && member.phone)
+      sendSMS(member.phone, `FFC: Hi ${member.name}! Attendance marked at ${timeIST}. Great workout! 💪`).catch(()=>{})
+
+    return res.json({ success:true, code:'OK', memberName:member.name, plan:member.plan, message:`Welcome, ${member.name}! Have a great workout! 💪` })
+
+  } catch(e) {
+    if (e.code === 11000) return res.json({ success:false, code:'ALREADY', message:'Already checked in today.' })
+    console.error('[ERROR] kiosk/scan:', e.message)
+    return res.status(500).json({ success:false, code:'ERROR', message:'Server error. Try again.' })
+  }
+})
+
+app.get('/api/kiosk/today-count', kioskOnly, async (_req, res) => {
+  try {
+    const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+    const count = await Attendance.countDocuments({ scanDate:todayIST })
+    res.json({ count })
+  } catch { res.json({ count:0 }) }
+})
+
+/* ═══════════════════════════════════════════════════
    ADMIN AUTH
    POST /api/admin/login  → { token }
    ═══════════════════════════════════════════════════ */
