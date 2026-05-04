@@ -768,7 +768,75 @@ app.post('/api/admin/change-password', adminOnly, async (req, res) => {
 
 /* ─── Members ─── */
 app.get('/api/admin/members',        adminOnly, async (_req,res) => { try{ res.json(toArr(await Member.find().sort('-createdAt'))) }catch{ res.json([]) } })
-app.post('/api/admin/members',       adminOnly, async (req,res) => { try{ const m=await Member.create({...req.body,_uid:uid()}); res.json(toObj(m)) }catch(e){ res.status(500).json({error:e.message}) } })
+app.post('/api/admin/members', adminOnly, async (req, res) => {
+  try {
+    const m = await Member.create({ ...req.body, _uid: uid() })
+    const member = toObj(m)
+
+    // ── Send QR welcome email if member has an email address ──
+    const emailTo = (req.body.email || '').trim()
+    if (emailTo && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTo)) {
+      try {
+        const QRCode    = (await import('qrcode')).default
+        const qrPayload = JSON.stringify({ id: member.id, gym: 'FFC' })
+        const qrDataUrl = await QRCode.toDataURL(qrPayload, { width: 280, margin: 2, color: { dark: '#111111', light: '#ffffff' } })
+        const qrBase64  = qrDataUrl.replace(/^data:image\/png;base64,/, '')
+
+        const planDisplay = (req.body.plan || 'Membership').split(/[–-]/)[0].trim()
+        const endDisplay  = req.body.endDate || req.body.joined || ''
+        const memberName  = req.body.name || 'Member'
+
+        await sendEmail({
+          to:      emailTo,
+          subject: `Welcome to FFC! Your Membership QR Card – ${esc(memberName)}`,
+          attachments: [{ filename: 'FFC_QR_Card.png', content: qrBase64, encoding: 'base64', cid: 'qrcode', contentType: 'image/png' }],
+          html: `
+<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#06050f;color:#f0eeff;border-radius:16px;overflow:hidden;">
+  <div style="background:linear-gradient(135deg,#7c3aed,#9c59f7);padding:32px;text-align:center;">
+    <h1 style="margin:0;font-size:32px;letter-spacing:4px;color:#fff;">FFC</h1>
+    <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:13px;letter-spacing:2px;">FRIENDS FITNESS CLUB</p>
+  </div>
+  <div style="padding:32px;">
+    <h2 style="color:#bb86fc;margin-top:0;">Welcome, ${esc(memberName)}! 💪</h2>
+    <p style="color:#b8b0d4;">You have been registered at Friends Fitness Club. Your membership is now <strong style="color:#22c55e;">active</strong>.</p>
+    <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+      <tr style="border-bottom:1px solid #2a2347;"><td style="padding:10px 0;color:#6b6490;">Plan</td><td style="padding:10px 0;font-weight:600;">${esc(planDisplay)}</td></tr>
+      <tr style="border-bottom:1px solid #2a2347;"><td style="padding:10px 0;color:#6b6490;">Phone</td><td style="padding:10px 0;">${esc(req.body.phone || '')}</td></tr>
+      <tr style="border-bottom:1px solid #2a2347;"><td style="padding:10px 0;color:#6b6490;">Joined</td><td style="padding:10px 0;">${esc(req.body.joined || '')}</td></tr>
+      <tr><td style="padding:10px 0;color:#6b6490;">Valid Until</td><td style="padding:10px 0;font-weight:600;color:#f59e0b;">${esc(endDisplay)}</td></tr>
+    </table>
+    <div style="background:#130f24;border:1px solid #2a2347;border-radius:12px;padding:20px;text-align:center;margin:24px 0;">
+      <p style="color:#bb86fc;font-weight:700;margin:0 0 12px;">Your Daily Attendance QR Code</p>
+      <img src="cid:qrcode" alt="QR Code" style="width:200px;height:200px;border-radius:8px;display:block;margin:0 auto;background:#fff;padding:8px;"/>
+      <p style="color:#6b6490;font-size:12px;margin:12px 0 0;">Show this QR at the gym entrance every day to mark attendance.<br/>Works once per day.</p>
+    </div>
+    <div style="background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.25);border-radius:10px;padding:16px;">
+      <p style="margin:0;font-size:13px;color:#b8b0d4;line-height:1.8;">
+        📍 Address: RT Complex 2nd Floor, Wardhaman Nagar, Nagpur<br/>
+        📞 Phone: +91 84848 05154<br/>
+        🕐 Timings: 5:00 AM – 10:00 PM (Mon–Sat)
+      </p>
+    </div>
+    <p style="color:#6b6490;font-size:12px;margin-top:20px;text-align:center;">Registered by gym admin · Friends Fitness Club</p>
+  </div>
+</div>`,
+        })
+        console.log('[OK] Walk-in QR email sent to', emailTo)
+      } catch(e) {
+        console.error('[ERROR] Walk-in email failed:', e.message)
+        // Don't fail the registration — just log the email error
+      }
+    }
+
+    // ── SMS welcome message ──
+    if (req.body.phone) {
+      const planDisplay = (req.body.plan || 'Membership').split(/[–-]/)[0].trim()
+      sendSMS(req.body.phone, `Welcome to Friends Fitness Club, ${req.body.name}! Your ${planDisplay} membership is now active. Valid till ${req.body.endDate || req.body.joined}. Gym: +91 84848 05154`).catch(() => {})
+    }
+
+    res.json(member)
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
 app.put('/api/admin/members/:id',    adminOnly, async (req,res) => { try{ await Member.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 app.delete('/api/admin/members/:id', adminOnly, async (req,res) => { try{ await Member.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
