@@ -525,10 +525,11 @@ app.post('/api/verify-payment', paymentLimiter, async (req, res) => {
   }
 
   const emailTo = meta?.memberEmail || ''
-  if (emailTo && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+  // Only send QR email if member was created in DB — a missing _uid means no valid QR can be made
+  if (emailTo && newMember?._uid && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     try {
       const QRCode    = (await import('qrcode')).default
-      const memberId  = newMember?._uid || 'guest'
+      const memberId  = newMember._uid   // guaranteed non-null by guard above
       const qrPayload = JSON.stringify({ id: memberId, gym: 'FFC' })
       const qrDataUrl = await QRCode.toDataURL(qrPayload, { width:280, margin:2, color:{ dark:'#111111', light:'#ffffff' } })
       const qrBase64  = qrDataUrl.replace(/^data:image\/png;base64,/, '')
@@ -685,30 +686,76 @@ function kioskOnly(req, res, next) {
 app.post('/api/kiosk/scan', kioskOnly, async (req, res) => {
   try {
     const { memberId } = req.body
-    if (!memberId) return res.status(400).json({ success:false, code:'ERROR', message:'Missing member ID.' })
 
-    const member = await Member.findOne({ _uid: memberId })
-    if (!member) return res.json({ success:false, code:'NOT_FOUND', message:'Member not found. Please contact reception.' })
+    // ── Validate memberId ──────────────────────────────────────────────────
+    if (!memberId || memberId === 'guest' || memberId.trim() === '') {
+      return res.json({ success:false, code:'INVALID', message:'Invalid QR code. Please get a new QR from reception.' })
+    }
 
+    // ── Look up member ─────────────────────────────────────────────────────
+    const member = await Member.findOne({ _uid: memberId.trim() })
+    if (!member) {
+      console.warn('[KIOSK] Member not found for _uid:', memberId)
+      return res.json({ success:false, code:'NOT_FOUND', message:'Member not found. Please contact reception.' })
+    }
+
+    // ── Today's date in IST (YYYY-MM-DD) ──────────────────────────────────
     const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
 
-    if (member.endDate && member.endDate < todayIST)
-      return res.json({ success:false, code:'EXPIRED', memberName:member.name, plan:member.plan, message:`Membership expired on ${member.endDate}. Please renew at reception.` })
+    // ── Check membership expiry ────────────────────────────────────────────
+    // Only block if endDate is set AND is strictly before today
+    if (member.endDate && member.endDate.trim() !== '' && member.endDate < todayIST) {
+      return res.json({
+        success:    false,
+        code:       'EXPIRED',
+        memberName: member.name,
+        plan:       member.plan,
+        message:    `Membership expired on ${member.endDate}. Please renew at reception.`,
+      })
+    }
 
-    const already = await Attendance.findOne({ memberId, scanDate:todayIST })
-    if (already)
-      return res.json({ success:false, code:'ALREADY', memberName:member.name, plan:member.plan, message:`Already checked in today at ${already.time}. Welcome back!` })
+    // ── Check already scanned today ────────────────────────────────────────
+    const already = await Attendance.findOne({ memberId: memberId.trim(), scanDate: todayIST })
+    if (already) {
+      return res.json({
+        success:    false,
+        code:       'ALREADY',
+        memberName: member.name,
+        plan:       member.plan,
+        message:    `Already checked in today at ${already.time}. Have a great workout!`,
+      })
+    }
 
+    // ── Save attendance ────────────────────────────────────────────────────
     const timeIST = new Date().toLocaleTimeString('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit' })
-    await Attendance.create({ _uid:uid(), memberId, scanDate:todayIST, time:timeIST, memberName:member.name, phone:member.phone, plan:member.plan })
+    await Attendance.create({
+      _uid:       uid(),
+      memberId:   memberId.trim(),
+      scanDate:   todayIST,
+      time:       timeIST,
+      memberName: member.name,
+      phone:      member.phone,
+      plan:       member.plan,
+    })
 
     if (process.env.FAST2SMS_API_KEY && member.phone)
       sendSMS(member.phone, `FFC: Hi ${member.name}! Attendance marked at ${timeIST}. Great workout! 💪`).catch(()=>{})
 
-    return res.json({ success:true, code:'OK', memberName:member.name, plan:member.plan, message:`Welcome, ${member.name}! Have a great workout! 💪` })
+    return res.json({
+      success:    true,
+      code:       'OK',
+      memberName: member.name,
+      plan:       member.plan,
+      message:    `Welcome, ${member.name}! Have a great workout! 💪`,
+    })
 
   } catch(e) {
-    if (e.code === 11000) return res.json({ success:false, code:'ALREADY', message:'Already checked in today.' })
+    if (e.code === 11000) {
+      // Race condition — duplicate scan at same millisecond
+      const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+      const already  = await Attendance.findOne({ memberId: req.body.memberId, scanDate: todayIST }).catch(()=>null)
+      return res.json({ success:false, code:'ALREADY', message: already ? `Already checked in today at ${already.time}.` : 'Already checked in today.' })
+    }
     console.error('[ERROR] kiosk/scan:', e.message)
     return res.status(500).json({ success:false, code:'ERROR', message:'Server error. Try again.' })
   }
@@ -913,29 +960,34 @@ app.delete('/api/admin/exercises/:id', adminOnly, async (req,res) => { try{ awai
 app.post('/api/admin/attendance/scan', adminOnly, async (req, res) => {
   try {
     const { memberId } = req.body
-    if (!memberId) return res.status(400).json({ success:false, message:'Missing memberId' })
+    if (!memberId || memberId === 'guest' || memberId.trim() === '')
+      return res.status(400).json({ success:false, code:'INVALID', message:'Invalid QR code. Member ID missing.' })
 
-    const member = await Member.findOne({ _uid: memberId })
+    const member = await Member.findOne({ _uid: memberId.trim() })
     if (!member) return res.json({ success:false, code:'NOT_FOUND', message:'Member not found in system.' })
 
     const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
-    if (member.endDate && member.endDate < todayIST)
+
+    if (member.endDate && member.endDate.trim() !== '' && member.endDate < todayIST)
       return res.json({ success:false, code:'EXPIRED', memberName:member.name, message:'Membership expired on ' + member.endDate + '. Please renew.' })
 
-    const already = await Attendance.findOne({ memberId, scanDate:todayIST })
+    const already = await Attendance.findOne({ memberId: memberId.trim(), scanDate:todayIST })
     if (already)
       return res.json({ success:false, code:'ALREADY', memberName:member.name, message:'Already checked in today at ' + already.time })
 
     const timeIST = new Date().toLocaleTimeString('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit' })
     await Attendance.create({
-      _uid:uid(), memberId, scanDate:todayIST, time:timeIST,
+      _uid:uid(), memberId:memberId.trim(), scanDate:todayIST, time:timeIST,
       memberName:member.name, phone:member.phone, plan:member.plan,
     })
 
     res.json({ success:true, code:'OK', memberName:member.name, message:'Welcome, ' + member.name + '! Attendance marked.' })
   } catch(e) {
-    if (e.code === 11000)
-      return res.json({ success:false, code:'ALREADY', message:'Already checked in today.' })
+    if (e.code === 11000) {
+      const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+      const already  = await Attendance.findOne({ memberId: req.body.memberId, scanDate:todayIST }).catch(()=>null)
+      return res.json({ success:false, code:'ALREADY', message: already ? 'Already checked in today at ' + already.time : 'Already checked in today.' })
+    }
     res.status(500).json({ success:false, message:e.message })
   }
 })
