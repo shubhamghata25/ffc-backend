@@ -49,14 +49,37 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET || '',
 })
 
-/* ─── ADMIN CREDENTIALS ─── */
-// IMPORTANT: Set ADMIN_PASSWORD_HASH in your Render env vars (bcrypt hash of your password).
-// Generate it once with: node -e "const b=require('bcryptjs');console.log(b.hashSync('yourpassword',12))"
-// Never rely on the fallback default in production!
+/* ─── ADMIN CREDENTIALS ───────────────────────────────────────────────────────
+   Main admin: full access to everything including Revenue/Expense/Staff sections
+   Sub-admins (4 staff accounts): access Members, Attendance, Offers, Leads,
+   Trainers, Store, Pricing, Exercises — but NOT Revenue, Expense, or Staff data
+──────────────────────────────────────────────────────────────────────────── */
 const adminCreds = {
   passwordHash: process.env.ADMIN_PASSWORD_HASH
     || bcrypt.hashSync(process.env.ADMIN_PASSWORD || 'gym@admin123', 10),
 }
+
+// Sub-admin accounts — set SUB_ADMIN_1..4 env vars as "username:password"
+function loadSubAdmins() {
+  const accounts = []
+  for (let i = 1; i <= 4; i++) {
+    const raw = process.env[`SUB_ADMIN_${i}`]
+    if (raw) {
+      const [username, ...rest] = raw.split(':')
+      const password = rest.join(':')
+      if (username && password) {
+        accounts.push({ username: username.trim(), passwordHash: bcrypt.hashSync(password.trim(), 10), id: `staff${i}` })
+      }
+    }
+  }
+  // Default sub-admin accounts if none configured in env
+  if (accounts.length === 0) {
+    const defaults = [["'staff1',"'staff1234'],["'staff2',"'staff2234'],["'staff3',"'staff3234'],["'staff4',"'staff4234']]
+    defaults.forEach(([u,p],i) => accounts.push({ username:u, passwordHash:bcrypt.hashSync(p,10), id:`staff${i+1}` }))
+  }
+  return accounts
+}
+const subAdmins = loadSubAdmins()
 
 /* ─── JWT SECRET ─── */
 // Set JWT_SECRET in your Render env vars to a long random string.
@@ -169,6 +192,28 @@ const attendanceSchema = new mongoose.Schema({
 }, { timestamps:true })
 attendanceSchema.index({ memberId:1, scanDate:1 }, { unique:true })
 
+const expenseSchema = new mongoose.Schema({
+  _uid:     { type:String, default:uid, unique:true },
+  title:    String,
+  amount:   { type:Number, default:0 },
+  category: { type:String, default:'General' },  // e.g. Rent, Equipment, Utilities, Salary, Other
+  date:     String,
+  note:     { type:String, default:'' },
+}, { timestamps:true })
+
+const staffSchema = new mongoose.Schema({
+  _uid:      { type:String, default:uid, unique:true },
+  name:      String,
+  role:      String,
+  phone:     { type:String, default:'' },
+  email:     { type:String, default:'' },
+  salary:    { type:Number, default:0 },
+  joinDate:  String,
+  endDate:   { type:String, default:'' },
+  status:    { type:String, default:'Active' },
+  note:      { type:String, default:'' },
+}, { timestamps:true })
+
 /* Models */
 const Member      = mongoose.model('Member',      memberSchema)
 const Lead        = mongoose.model('Lead',         leadSchema)
@@ -181,6 +226,8 @@ const Product     = mongoose.model('Product',      productSchema)
 const Exercise    = mongoose.model('Exercise',     exerciseSchema)
 const Order       = mongoose.model('Order',        orderSchema)
 const Attendance  = mongoose.model('Attendance',   attendanceSchema)
+const Expense     = mongoose.model('Expense',      expenseSchema)
+const Staff       = mongoose.model('Staff',        staffSchema)
 
 /* ─── SEED ─── */
 async function upsertOne(Model, _uid, data) {
@@ -354,20 +401,31 @@ async function sendSMS(phone, message) {
    4. No secret is ever sent to the frontend JS bundle
    ───────────────────────────────────────────────────── */
 
-function signAdminToken() {
-  return jwt.sign({ role: 'admin' }, jwtSecret, { expiresIn: '8h' })
+function signAdminToken(role='admin', username='admin') {
+  return jwt.sign({ role, username }, jwtSecret, { expiresIn: '8h' })
 }
 
+// Allows both main admin (role:'admin') and sub-admins (role:'staff')
 function adminOnly(req, res, next) {
   const auth = req.headers['authorization'] || ''
   if (!auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' })
   const token = auth.slice(7)
   try {
-    jwt.verify(token, jwtSecret)
+    const decoded = jwt.verify(token, jwtSecret)
+    req.adminRole = decoded.role     // 'admin' or 'staff'
+    req.adminUser = decoded.username
     next()
   } catch {
     return res.status(401).json({ error: 'Session expired. Please log in again.' })
   }
+}
+
+// Only main admin can access financial/staff data
+function mainAdminOnly(req, res, next) {
+  adminOnly(req, res, () => {
+    if (req.adminRole !== 'admin') return res.status(403).json({ error: 'Access denied. Main admin only.' })
+    next()
+  })
 }
 
 /* ─── START SERVER ─── */
@@ -774,12 +832,31 @@ app.get('/api/kiosk/today-count', kioskOnly, async (_req, res) => {
    POST /api/admin/login  → { token }
    ═══════════════════════════════════════════════════ */
 app.post('/api/admin/login', loginLimiter, async (req, res) => {
-  const { password } = req.body
+  const { password, username } = req.body
   if (!password) return res.status(400).json({ error: 'Password required' })
-  const valid = await bcrypt.compare(password, adminCreds.passwordHash)
-  if (!valid) return res.status(401).json({ error: 'Invalid credentials' })
-  const token = signAdminToken()
-  res.json({ token })
+
+  // Try main admin login (no username required, or username === 'admin')
+  if (!username || username === 'admin') {
+    const valid = await bcrypt.compare(password, adminCreds.passwordHash)
+    if (valid) {
+      const token = signAdminToken('admin', 'admin')
+      return res.json({ token, role: 'admin', username: 'admin' })
+    }
+  }
+
+  // Try sub-admin login
+  if (username) {
+    const account = subAdmins.find(a => a.username === username.trim())
+    if (account) {
+      const valid = await bcrypt.compare(password, account.passwordHash)
+      if (valid) {
+        const token = signAdminToken('staff', account.username)
+        return res.json({ token, role: 'staff', username: account.username })
+      }
+    }
+  }
+
+  return res.status(401).json({ error: 'Invalid credentials' })
 })
 
 /* ═══════════════════════════════════════════════════
@@ -1029,6 +1106,47 @@ app.get('/api/admin/members/expiring', adminOnly, async (_req, res) => {
 
 /* ─── Orders ─── */
 app.get('/api/admin/orders', adminOnly, async (_req,res) => { try{ res.json(toArr(await Order.find().sort('-createdAt'))) }catch{ res.json([]) } })
+
+/* ─── Expenses (main admin only) ─── */
+app.get('/api/admin/expenses', mainAdminOnly, async (_req,res) => { try{ res.json(toArr(await Expense.find().sort('-date'))) }catch{ res.json([]) } })
+app.post('/api/admin/expenses', mainAdminOnly, async (req,res) => { try{ const e=await Expense.create({...req.body,_uid:uid()}); res.json(toObj(e)) }catch(e){ res.status(500).json({error:e.message}) } })
+app.put('/api/admin/expenses/:id', mainAdminOnly, async (req,res) => { try{ await Expense.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
+app.delete('/api/admin/expenses/:id', mainAdminOnly, async (req,res) => { try{ await Expense.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
+
+/* ─── Staff Salary (main admin only) ─── */
+app.get('/api/admin/staff', mainAdminOnly, async (_req,res) => { try{ res.json(toArr(await Staff.find().sort('name'))) }catch{ res.json([]) } })
+app.post('/api/admin/staff', mainAdminOnly, async (req,res) => { try{ const s=await Staff.create({...req.body,_uid:uid()}); res.json(toObj(s)) }catch(e){ res.status(500).json({error:e.message}) } })
+app.put('/api/admin/staff/:id', mainAdminOnly, async (req,res) => { try{ await Staff.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
+app.delete('/api/admin/staff/:id', mainAdminOnly, async (req,res) => { try{ await Staff.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
+
+/* ─── Revenue summary (main admin only) ─── */
+app.get('/api/admin/revenue', mainAdminOnly, async (_req,res) => {
+  try {
+    const members = await Member.find({ fee:'Paid' })
+    const monthly = {}
+    for (const m of members) {
+      const month = (m.joined||'').slice(0,7)
+      if (!month) continue
+      const amount = parseInt((m.plan||'').replace(/[^\d]/g,''))||0
+      monthly[month] = (monthly[month]||0) + amount
+    }
+    const expenses = await Expense.find()
+    const expByMonth = {}
+    for (const e of expenses) {
+      const month = (e.date||'').slice(0,7)
+      if (!month) continue
+      expByMonth[month] = (expByMonth[month]||0) + (e.amount||0)
+    }
+    const staffList = await Staff.find({ status:'Active' })
+    const totalMonthlySalary = staffList.reduce((s,st) => s + (st.salary||0), 0)
+    res.json({ monthly, expByMonth, totalMonthlySalary, staffCount: staffList.length })
+  } catch(e) { res.status(500).json({error:e.message}) }
+})
+
+/* ─── Sub-admin list (main admin only) ─── */
+app.get('/api/admin/sub-admins', mainAdminOnly, (_req, res) => {
+  res.json(subAdmins.map(a => ({ id: a.id, username: a.username })))
+})
 
 /* ─── START ─── */
 startServer()
