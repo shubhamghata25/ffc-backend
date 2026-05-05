@@ -74,7 +74,7 @@ function loadSubAdmins() {
   }
   // Default sub-admin accounts if none configured in env
   if (accounts.length === 0) {
-    const defaults = [["'staff1',"'staff1234'],["'staff2',"'staff2234'],["'staff3',"'staff3234'],["'staff4',"'staff4234']]
+        const defaults = [['staff1','staff1234'],['staff2','staff2234'],['staff3','staff3234'],['staff4','staff4234']]
     defaults.forEach(([u,p],i) => accounts.push({ username:u, passwordHash:bcrypt.hashSync(p,10), id:`staff${i+1}` }))
   }
   return accounts
@@ -835,28 +835,24 @@ app.post('/api/admin/login', loginLimiter, async (req, res) => {
   const { password, username } = req.body
   if (!password) return res.status(400).json({ error: 'Password required' })
 
-  // Try main admin login (no username required, or username === 'admin')
+  // Main admin login — no username sent (or explicitly 'admin')
   if (!username || username === 'admin') {
     const valid = await bcrypt.compare(password, adminCreds.passwordHash)
     if (valid) {
       const token = signAdminToken('admin', 'admin')
       return res.json({ token, role: 'admin', username: 'admin' })
     }
+    // Wrong password for main admin — don't fall through to staff check
+    return res.status(401).json({ error: 'Invalid credentials' })
   }
 
-  // Try sub-admin login
-  if (username) {
-    const account = subAdmins.find(a => a.username === username.trim())
-    if (account) {
-      const valid = await bcrypt.compare(password, account.passwordHash)
-      if (valid) {
-        const token = signAdminToken('staff', account.username)
-        return res.json({ token, role: 'staff', username: account.username })
-      }
-    }
-  }
-
-  return res.status(401).json({ error: 'Invalid credentials' })
+  // Staff / sub-admin login — username was provided
+  const account = subAdmins.find(a => a.username === username.trim())
+  if (!account) return res.status(401).json({ error: 'Invalid credentials' })
+  const validStaff = await bcrypt.compare(password, account.passwordHash)
+  if (!validStaff) return res.status(401).json({ error: 'Invalid credentials' })
+  const token = signAdminToken('staff', account.username)
+  return res.json({ token, role: 'staff', username: account.username })
 })
 
 /* ═══════════════════════════════════════════════════
