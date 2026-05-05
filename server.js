@@ -109,11 +109,15 @@ function esc(str) {
 
 /* ─── MONGODB SCHEMAS ─── */
 const memberSchema = new mongoose.Schema({
-  _uid:    { type:String, default:uid, unique:true },
-  name:    String, phone:String, plan:String,
-  joined:  String, status:String, fee:String,
-  endDate: { type:String, default:'' },
-  email:   { type:String, default:'' },
+  _uid:          { type:String, default:uid, unique:true },
+  name:          String, phone:String, plan:String,
+  joined:        String, status:String, fee:String,
+  endDate:       { type:String, default:'' },   // scan deadline (paid days run out)
+  email:         { type:String, default:'' },
+  // Personal Trainer Plan fields
+  ptPlan:        { type:Boolean, default:false }, // is this a PT plan?
+  scanDays:      { type:Number, default:0 },      // total QR scan days allowed
+  accessEndDate: { type:String, default:'' },     // physical access window deadline
 }, { timestamps:true })
 
 const leadSchema = new mongoose.Schema({
@@ -760,9 +764,33 @@ app.post('/api/kiosk/scan', kioskOnly, async (req, res) => {
     // ── Today's date in IST (YYYY-MM-DD) ──────────────────────────────────
     const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
 
-    // ── Check membership expiry ────────────────────────────────────────────
-    // Only block if endDate is set AND is strictly before today
-    if (member.endDate && member.endDate.trim() !== '' && member.endDate < todayIST) {
+    // ── PT Plan: check physical access window ────────────────────────────────
+    if (member.ptPlan && member.accessEndDate && member.accessEndDate.trim() !== '' && member.accessEndDate < todayIST) {
+      return res.json({
+        success:    false,
+        code:       'EXPIRED',
+        memberName: member.name,
+        plan:       member.plan,
+        message:    `PT Plan access window expired on ${member.accessEndDate}. Please renew at reception.`,
+      })
+    }
+
+    // ── PT Plan: check remaining scan days ───────────────────────────────────
+    if (member.ptPlan && member.scanDays > 0) {
+      const usedScans = await Attendance.countDocuments({ memberId: memberId.trim() })
+      if (usedScans >= member.scanDays) {
+        return res.json({
+          success:    false,
+          code:       'EXPIRED',
+          memberName: member.name,
+          plan:       member.plan,
+          message:    `All ${member.scanDays} PT scan days used. Please renew at reception.`,
+        })
+      }
+    }
+
+    // ── Regular plan: check membership expiry ────────────────────────────────
+    if (!member.ptPlan && member.endDate && member.endDate.trim() !== '' && member.endDate < todayIST) {
       return res.json({
         success:    false,
         code:       'EXPIRED',
@@ -772,7 +800,7 @@ app.post('/api/kiosk/scan', kioskOnly, async (req, res) => {
       })
     }
 
-    // ── Check already scanned today ────────────────────────────────────────
+    // ── Check already scanned today ──────────────────────────────────────────
     const already = await Attendance.findOne({ memberId: memberId.trim(), scanDate: todayIST })
     if (already) {
       return res.json({
@@ -784,7 +812,7 @@ app.post('/api/kiosk/scan', kioskOnly, async (req, res) => {
       })
     }
 
-    // ── Save attendance ────────────────────────────────────────────────────
+    // ── Save attendance ──────────────────────────────────────────────────────
     const timeIST = new Date().toLocaleTimeString('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit' })
     await Attendance.create({
       _uid:       uid(),
@@ -799,12 +827,19 @@ app.post('/api/kiosk/scan', kioskOnly, async (req, res) => {
     if (process.env.FAST2SMS_API_KEY && member.phone)
       sendSMS(member.phone, `FFC: Hi ${member.name}! Attendance marked at ${timeIST}. Great workout! 💪`).catch(()=>{})
 
+    let welcomeMsg = `Welcome, ${member.name}! Have a great workout! 💪`
+    if (member.ptPlan && member.scanDays > 0) {
+      const usedNow = await Attendance.countDocuments({ memberId: memberId.trim() })
+      const remaining = member.scanDays - usedNow
+      welcomeMsg += ` (${usedNow}/${member.scanDays} PT days — ${remaining} remaining)`
+    }
+
     return res.json({
       success:    true,
       code:       'OK',
       memberName: member.name,
       plan:       member.plan,
-      message:    `Welcome, ${member.name}! Have a great workout! 💪`,
+      message:    welcomeMsg,
     })
 
   } catch(e) {
@@ -1055,7 +1090,18 @@ app.post('/api/admin/attendance/scan', adminOnly, async (req, res) => {
 
     const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
 
-    if (member.endDate && member.endDate.trim() !== '' && member.endDate < todayIST)
+    // PT Plan checks
+    if (member.ptPlan && member.accessEndDate && member.accessEndDate < todayIST)
+      return res.json({ success:false, code:'EXPIRED', memberName:member.name, message:'PT Plan access window expired on ' + member.accessEndDate + '. Please renew.' })
+
+    if (member.ptPlan && member.scanDays > 0) {
+      const usedScans = await Attendance.countDocuments({ memberId: memberId.trim() })
+      if (usedScans >= member.scanDays)
+        return res.json({ success:false, code:'EXPIRED', memberName:member.name, message:'All ' + member.scanDays + ' PT scan days used. Please renew.' })
+    }
+
+    // Regular plan expiry
+    if (!member.ptPlan && member.endDate && member.endDate.trim() !== '' && member.endDate < todayIST)
       return res.json({ success:false, code:'EXPIRED', memberName:member.name, message:'Membership expired on ' + member.endDate + '. Please renew.' })
 
     const already = await Attendance.findOne({ memberId: memberId.trim(), scanDate:todayIST })
@@ -1068,7 +1114,12 @@ app.post('/api/admin/attendance/scan', adminOnly, async (req, res) => {
       memberName:member.name, phone:member.phone, plan:member.plan,
     })
 
-    res.json({ success:true, code:'OK', memberName:member.name, message:'Welcome, ' + member.name + '! Attendance marked.' })
+    let msg = 'Welcome, ' + member.name + '! Attendance marked.'
+    if (member.ptPlan && member.scanDays > 0) {
+      const usedNow = await Attendance.countDocuments({ memberId: memberId.trim() })
+      msg += ' PT: ' + usedNow + '/' + member.scanDays + ' days used.'
+    }
+    res.json({ success:true, code:'OK', memberName:member.name, message:msg })
   } catch(e) {
     if (e.code === 11000) {
       const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
