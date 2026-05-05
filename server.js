@@ -827,6 +827,20 @@ app.get('/api/kiosk/today-count', kioskOnly, async (_req, res) => {
   } catch { res.json({ count:0 }) }
 })
 
+/* ─── DEBUG: Test if password works (remove after fixing) ─── */
+app.get('/api/admin/debug-auth', async (_req, res) => {
+  const testPw = 'gym@admin123'
+  const valid = await bcrypt.compare(testPw, adminCreds.passwordHash)
+  res.json({
+    passwordEnvSet: !!process.env.ADMIN_PASSWORD,
+    hashEnvSet: !!process.env.ADMIN_PASSWORD_HASH,
+    passwordEnvValue: process.env.ADMIN_PASSWORD || '(not set)',
+    hashPrefix: adminCreds.passwordHash.slice(0,20),
+    testPasswordValid: valid,
+    nodeEnv: process.env.NODE_ENV || '(not set)',
+  })
+})
+
 /* ═══════════════════════════════════════════════════
    ADMIN AUTH
    POST /api/admin/login  → { token }
