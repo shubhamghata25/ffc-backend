@@ -59,27 +59,15 @@ const adminCreds = {
     || bcrypt.hashSync(process.env.ADMIN_PASSWORD || 'gym@admin123', 10),
 }
 
-// Sub-admin accounts — set SUB_ADMIN_1..4 env vars as "username:password"
-function loadSubAdmins() {
-  const accounts = []
-  for (let i = 1; i <= 4; i++) {
-    const raw = process.env[`SUB_ADMIN_${i}`]
-    if (raw) {
-      const [username, ...rest] = raw.split(':')
-      const password = rest.join(':')
-      if (username && password) {
-        accounts.push({ username: username.trim(), passwordHash: bcrypt.hashSync(password.trim(), 10), id: `staff${i}` })
-      }
-    }
-  }
-  // Default sub-admin accounts if none configured in env
-  if (accounts.length === 0) {
-        const defaults = [['staff1','staff1234'],['staff2','staff2234'],['staff3','staff3234'],['staff4','staff4234']]
-    defaults.forEach(([u,p],i) => accounts.push({ username:u, passwordHash:bcrypt.hashSync(p,10), id:`staff${i+1}` }))
-  }
-  return accounts
+// Sub-admins are now stored in MongoDB (max 5). Env-var fallback kept for migration.
+// subAdmins cache is refreshed from DB on each login attempt.
+let subAdminsCache = []
+async function refreshSubAdminsCache() {
+  try {
+    const docs = await SubAdmin.find({}).lean()
+    subAdminsCache = docs.map(d => ({ id: d._id.toString(), username: d.username, passwordHash: d.passwordHash, createdAt: d.createdAt }))
+  } catch(e) { console.error('[SubAdmin] cache refresh failed:', e.message) }
 }
-const subAdmins = loadSubAdmins()
 
 /* ─── JWT SECRET ─── */
 // Set JWT_SECRET in your Render env vars to a long random string.
@@ -231,6 +219,12 @@ const staffSchema = new mongoose.Schema({
 }, { timestamps:true })
 
 /* Models */
+const subAdminSchema = new mongoose.Schema({
+  username:     { type:String, required:true, unique:true, trim:true, minlength:3 },
+  passwordHash: { type:String, required:true },
+}, { timestamps:true })
+const SubAdmin = mongoose.model('SubAdmin', subAdminSchema)
+
 const Member      = mongoose.model('Member',      memberSchema)
 const Lead        = mongoose.model('Lead',         leadSchema)
 const Offer       = mongoose.model('Offer',        offerSchema)
@@ -908,7 +902,8 @@ app.post('/api/admin/login', loginLimiter, async (req, res) => {
   }
 
   // Staff / sub-admin login — username was provided
-  const account = subAdmins.find(a => a.username === username.trim())
+  await refreshSubAdminsCache()
+  const account = subAdminsCache.find(a => a.username === username.trim())
   if (!account) return res.status(401).json({ error: 'Invalid credentials' })
   const validStaff = await bcrypt.compare(password, account.passwordHash)
   if (!validStaff) return res.status(401).json({ error: 'Invalid credentials' })
@@ -1303,9 +1298,69 @@ app.get('/api/admin/revenue', mainAdminOnly, async (_req,res) => {
   } catch(e) { res.status(500).json({error:e.message}) }
 })
 
-/* ─── Sub-admin list (main admin only) ─── */
-app.get('/api/admin/sub-admins', mainAdminOnly, (_req, res) => {
-  res.json(subAdmins.map(a => ({ id: a.id, username: a.username })))
+/* ─── Sub-admin CRUD (main admin only, max 5) ─── */
+const SA_MAX = 5
+
+app.get('/api/admin/subadmins', mainAdminOnly, async (_req, res) => {
+  try {
+    const docs = await SubAdmin.find({}).sort({ createdAt:1 }).lean()
+    res.json(docs.map(d => ({ id: d._id.toString(), username: d.username, createdAt: d.createdAt })))
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/admin/subadmins', mainAdminOnly, async (req, res) => {
+  try {
+    const count = await SubAdmin.countDocuments()
+    if (count >= SA_MAX) return res.status(400).json({ error: `Maximum ${SA_MAX} sub-admins allowed` })
+    const { username, password } = req.body
+    if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
+    if (username.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' })
+    if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' })
+    if (username === 'admin') return res.status(400).json({ error: 'Reserved username' })
+    const passwordHash = await bcrypt.hash(password.trim(), 10)
+    const doc = await SubAdmin.create({ username: username.trim(), passwordHash })
+    await refreshSubAdminsCache()
+    res.json({ id: doc._id.toString(), username: doc.username, createdAt: doc.createdAt })
+  } catch(e) {
+    if (e.code === 11000) return res.status(400).json({ error: 'Username already exists' })
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.put('/api/admin/subadmins/:id', mainAdminOnly, async (req, res) => {
+  try {
+    const { username, password } = req.body
+    if (!username) return res.status(400).json({ error: 'Username required' })
+    if (username.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' })
+    if (username === 'admin') return res.status(400).json({ error: 'Reserved username' })
+    const update = { username: username.trim() }
+    if (password && password.trim()) {
+      if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' })
+      update.passwordHash = await bcrypt.hash(password.trim(), 10)
+    }
+    const doc = await SubAdmin.findByIdAndUpdate(req.params.id, update, { new:true, runValidators:true })
+    if (!doc) return res.status(404).json({ error: 'Sub-admin not found' })
+    await refreshSubAdminsCache()
+    res.json({ id: doc._id.toString(), username: doc.username })
+  } catch(e) {
+    if (e.code === 11000) return res.status(400).json({ error: 'Username already exists' })
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.delete('/api/admin/subadmins/:id', mainAdminOnly, async (req, res) => {
+  try {
+    const doc = await SubAdmin.findByIdAndDelete(req.params.id)
+    if (!doc) return res.status(404).json({ error: 'Sub-admin not found' })
+    await refreshSubAdminsCache()
+    res.json({ ok: true })
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
+
+// Legacy route kept for backward compat
+app.get('/api/admin/sub-admins', mainAdminOnly, async (_req, res) => {
+  const docs = await SubAdmin.find({}).lean()
+  res.json(docs.map(d => ({ id: d._id.toString(), username: d.username })))
 })
 
 /* ─── START ─── */
