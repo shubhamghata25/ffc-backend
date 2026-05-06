@@ -126,16 +126,28 @@ const leadSchema = new mongoose.Schema({
 }, { timestamps:true })
 
 const offerSchema = new mongoose.Schema({
-  _uid:        { type:String, default:uid, unique:true },
-  status:      { type:String, default:'OFF' },
+  _uid:         { type:String, default:uid, unique:true },
+  status:       { type:String, default:'OFF' },
   title:String, description:String, btn:String, link:String, poster:String,
+  // Special offer plan
+  hasSpecialPlan:  { type:Boolean, default:false },
+  planLabel:       { type:String, default:'' },
+  planPrice:       { type:Number, default:0 },
+  planOrigPrice:   { type:Number, default:0 },
+  planPeriod:      { type:String, default:'month' },
+  planFeatures:    { type:String, default:'' },  // comma-separated
+  linkedPlanId:    { type:String, default:'' },  // _uid of created Plan
 }, { timestamps:true })
 
 const trainerSchema = new mongoose.Schema({
-  _uid:   { type:String, default:uid, unique:true },
+  _uid:       { type:String, default:uid, unique:true },
   name:String, role:String, exp:String, spec:String,
-  status: { type:String, default:'Active' },
-  photo:  { type:String, default:'' },
+  status:     { type:String, default:'Active' },
+  photo:      { type:String, default:'' },
+  ptEnabled:  { type:Boolean, default:false },  // offers PT sessions
+  ptPlanId:   { type:String, default:'' },       // linked plan _uid
+  ptPlanLabel:{ type:String, default:'' },       // display name
+  bio:        { type:String, default:'' },
 }, { timestamps:true })
 
 const planSchema = new mongoose.Schema({
@@ -1015,9 +1027,65 @@ app.delete('/api/admin/leads/:id',   adminOnly, async (req,res) => { try{ await 
 
 /* ─── Offers ─── */
 app.get('/api/admin/offers',         adminOnly, async (_req,res) => { try{ res.json(toArr(await Offer.find().sort('-createdAt'))) }catch{ res.json([]) } })
-app.post('/api/admin/offers',        adminOnly, async (req,res) => { try{ const o=await Offer.create({...req.body,_uid:uid()}); res.json(toObj(o)) }catch(e){ res.status(500).json({error:e.message}) } })
-app.put('/api/admin/offers/:id',     adminOnly, async (req,res) => { try{ await Offer.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
-app.delete('/api/admin/offers/:id',  adminOnly, async (req,res) => { try{ await Offer.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
+
+// Helper: upsert special plan linked to offer
+async function upsertOfferPlan(offerData, existingPlanId) {
+  if (!offerData.hasSpecialPlan || !offerData.planLabel || !offerData.planPrice) return existingPlanId || ''
+  const planData = {
+    label: offerData.planLabel,
+    period: offerData.planPeriod || 'month',
+    price: Number(offerData.planPrice) || 0,
+    originalPrice: Number(offerData.planOrigPrice) || Number(offerData.planPrice) || 0,
+    discount: offerData.planOrigPrice > offerData.planPrice ? Math.round(((offerData.planOrigPrice - offerData.planPrice) / offerData.planOrigPrice) * 100) : 0,
+    discountType: 'percent',
+    features: (offerData.planFeatures || '').split(',').map(f => f.trim()).filter(Boolean),
+    active: offerData.status === 'ON',
+    popular: true,
+    description: `Special offer: ${offerData.title}`,
+    offerPlan: true,
+  }
+  if (existingPlanId) {
+    await Plan.findOneAndUpdate({ _uid: existingPlanId }, planData)
+    return existingPlanId
+  } else {
+    const newPlan = await Plan.create({ ...planData, _uid: uid(), order: 99 })
+    return newPlan._uid
+  }
+}
+
+app.post('/api/admin/offers', adminOnly, async (req,res) => {
+  try {
+    const linkedPlanId = await upsertOfferPlan(req.body, '')
+    const o = await Offer.create({ ...req.body, _uid: uid(), linkedPlanId })
+    res.json(toObj(o))
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
+
+app.put('/api/admin/offers/:id', adminOnly, async (req,res) => {
+  try {
+    const existing = await Offer.findOne({ _uid: req.params.id })
+    const linkedPlanId = await upsertOfferPlan(req.body, existing?.linkedPlanId || '')
+    // If special plan turned off, deactivate linked plan
+    if (!req.body.hasSpecialPlan && linkedPlanId) {
+      await Plan.findOneAndUpdate({ _uid: linkedPlanId }, { active: false })
+    }
+    // If offer toggled OFF, deactivate linked plan; if ON, activate it
+    if (linkedPlanId) {
+      await Plan.findOneAndUpdate({ _uid: linkedPlanId }, { active: req.body.status === 'ON' })
+    }
+    await Offer.findOneAndUpdate({ _uid: req.params.id }, { ...req.body, linkedPlanId })
+    res.json({ ok: true })
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
+
+app.delete('/api/admin/offers/:id', adminOnly, async (req,res) => {
+  try {
+    const offer = await Offer.findOne({ _uid: req.params.id })
+    if (offer?.linkedPlanId) await Plan.findOneAndDelete({ _uid: offer.linkedPlanId })
+    await Offer.findOneAndDelete({ _uid: req.params.id })
+    res.json({ ok: true })
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
 
 /* ─── Trainers ─── */
 app.get('/api/admin/trainers',        adminOnly, async (_req,res) => { try{ res.json(toArr(await Trainer.find().sort('name'))) }catch{ res.json([]) } })
@@ -1183,14 +1251,22 @@ app.delete('/api/admin/staff/:id', mainAdminOnly, async (req,res) => { try{ awai
 /* ─── Revenue summary (main admin only) ─── */
 app.get('/api/admin/revenue', mainAdminOnly, async (_req,res) => {
   try {
+    // Revenue from paid members - use plan price from Plan collection if available
     const members = await Member.find({ fee:'Paid' })
+    const allPlans = await Plan.find()
+    const planPriceMap = {}
+    allPlans.forEach(p => { planPriceMap[p.label] = p.price })
+
     const monthly = {}
     for (const m of members) {
       const month = (m.joined||'').slice(0,7)
       if (!month) continue
-      const amount = parseInt((m.plan||'').replace(/[^\d]/g,''))||0
-      monthly[month] = (monthly[month]||0) + amount
+      // Try to get price from plan label match, then fallback to parsing from plan string
+      const planPrice = planPriceMap[m.plan] || parseInt((m.plan||'').replace(/[^\d]/g,'')) || 0
+      monthly[month] = (monthly[month]||0) + planPrice
     }
+
+    // Manual expenses by month
     const expenses = await Expense.find()
     const expByMonth = {}
     for (const e of expenses) {
@@ -1198,9 +1274,32 @@ app.get('/api/admin/revenue', mainAdminOnly, async (_req,res) => {
       if (!month) continue
       expByMonth[month] = (expByMonth[month]||0) + (e.amount||0)
     }
+
+    // Active staff salaries - add to each current month as recurring expense
     const staffList = await Staff.find({ status:'Active' })
     const totalMonthlySalary = staffList.reduce((s,st) => s + (st.salary||0), 0)
-    res.json({ monthly, expByMonth, totalMonthlySalary, staffCount: staffList.length })
+
+    // Add salary to current month expenses for net profit calculation
+    const currentMonth = new Date().toISOString().slice(0,7)
+    const expWithSalary = { ...expByMonth }
+    if (totalMonthlySalary > 0) {
+      expWithSalary[currentMonth] = (expWithSalary[currentMonth]||0) + totalMonthlySalary
+    }
+
+    // Build full month list including salary months
+    const allMonths = [...new Set([...Object.keys(monthly), ...Object.keys(expWithSalary)])]
+    const breakdown = {}
+    allMonths.forEach(m => {
+      breakdown[m] = {
+        revenue: monthly[m] || 0,
+        expenses: expByMonth[m] || 0,
+        salary: m === currentMonth ? totalMonthlySalary : 0,
+        totalCost: (expByMonth[m]||0) + (m === currentMonth ? totalMonthlySalary : 0),
+        net: (monthly[m]||0) - (expByMonth[m]||0) - (m === currentMonth ? totalMonthlySalary : 0),
+      }
+    })
+
+    res.json({ monthly, expByMonth, expWithSalary, breakdown, totalMonthlySalary, staffCount: staffList.length })
   } catch(e) { res.status(500).json({error:e.message}) }
 })
 
