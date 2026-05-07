@@ -125,6 +125,8 @@ const offerSchema = new mongoose.Schema({
   planPeriod:      { type:String, default:'month' },
   planFeatures:    { type:String, default:'' },  // comma-separated
   linkedPlanId:    { type:String, default:'' },  // _uid of created Plan
+  linkType:        { type:String, default:'pricing' }, // 'pricing' | 'plan' | 'custom'
+  customLink:      { type:String, default:'' },
 }, { timestamps:true })
 
 const trainerSchema = new mongoose.Schema({
@@ -222,12 +224,16 @@ const staffSchema = new mongoose.Schema({
   endDate:       { type:String, default:'' },
   status:        { type:String, default:'Active' },
   note:          { type:String, default:'' },
+  hasLogin:      { type:Boolean, default:false },  // whether this staff has portal login
+  subAdminId:    { type:String, default:'' },      // linked SubAdmin _id
 }, { timestamps:true })
 
 /* Models */
 const subAdminSchema = new mongoose.Schema({
   username:     { type:String, required:true, unique:true, trim:true, minlength:3 },
   passwordHash: { type:String, required:true },
+  staffId:      { type:String, default:'' },   // linked Staff _uid (if created from staff record)
+  staffName:    { type:String, default:'' },   // cached staff name for display
 }, { timestamps:true })
 const SubAdmin = mongoose.model('SubAdmin', subAdminSchema)
 
@@ -1371,6 +1377,72 @@ app.delete('/api/admin/subadmins/:id', mainAdminOnly, async (req, res) => {
 app.get('/api/admin/sub-admins', mainAdminOnly, async (_req, res) => {
   const docs = await SubAdmin.find({}).lean()
   res.json(docs.map(d => ({ id: d._id.toString(), username: d.username })))
+})
+
+/* ─── Staff Login Access Toggle ─── */
+app.post('/api/admin/staff/:id/login', mainAdminOnly, async (req, res) => {
+  try {
+    const { enable, username, password } = req.body
+    const staff = await Staff.findOne({ _uid: req.params.id })
+    if (!staff) return res.status(404).json({ error: 'Staff not found' })
+
+    if (enable) {
+      if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
+      if (username.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' })
+      if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' })
+      const count = await SubAdmin.countDocuments()
+      if (!staff.subAdminId && count >= 5) return res.status(400).json({ error: 'Maximum 5 sub-admin accounts reached' })
+      const passwordHash = await bcrypt.hash(password.trim(), 10)
+      let subAdmin
+      if (staff.subAdminId) {
+        // Update existing
+        subAdmin = await SubAdmin.findByIdAndUpdate(staff.subAdminId, { username: username.trim(), passwordHash, staffName: staff.name }, { new: true })
+        if (!subAdmin) {
+          // Was deleted externally, recreate
+          subAdmin = await SubAdmin.create({ username: username.trim(), passwordHash, staffId: staff._uid, staffName: staff.name })
+        }
+      } else {
+        subAdmin = await SubAdmin.create({ username: username.trim(), passwordHash, staffId: staff._uid, staffName: staff.name })
+      }
+      await Staff.findOneAndUpdate({ _uid: req.params.id }, { hasLogin: true, subAdminId: subAdmin._id.toString() })
+      await refreshSubAdminsCache()
+      res.json({ ok: true, username: subAdmin.username })
+    } else {
+      // Disable login
+      if (staff.subAdminId) {
+        await SubAdmin.findByIdAndDelete(staff.subAdminId)
+        await refreshSubAdminsCache()
+      }
+      await Staff.findOneAndUpdate({ _uid: req.params.id }, { hasLogin: false, subAdminId: '' })
+      res.json({ ok: true })
+    }
+  } catch(e) {
+    if (e.code === 11000) return res.status(400).json({ error: 'Username already taken' })
+    res.status(500).json({ error: e.message })
+  }
+})
+
+/* ─── Trainer PT Plan quick-create ─── */
+app.post('/api/admin/trainers/:id/pt-plan', adminOnly, async (req, res) => {
+  try {
+    const trainer = await Trainer.findOne({ _uid: req.params.id })
+    if (!trainer) return res.status(404).json({ error: 'Trainer not found' })
+    const { label, price, period, features, description, maxStudents } = req.body
+    if (!label || !price) return res.status(400).json({ error: 'Plan name and price required' })
+    const plan = await Plan.create({
+      _uid: uid(), label, period: period||'month',
+      price: Number(price), originalPrice: Number(price),
+      features: Array.isArray(features) ? features : [],
+      description: description||'',
+      active: true, ptPlan: true,
+      trainerId: trainer._uid,
+      maxStudents: Number(maxStudents)||5,
+      enrolledCount: 0,
+    })
+    // Link plan back to trainer
+    await Trainer.findOneAndUpdate({ _uid: req.params.id }, { ptEnabled: true, ptPlanId: plan._uid, ptPlanLabel: label })
+    res.json({ ok: true, planId: plan._uid })
+  } catch(e) { res.status(500).json({ error: e.message }) }
 })
 
 /* ─── Salary Alert API (3-day advance warning) ─── */
