@@ -150,6 +150,10 @@ const planSchema = new mongoose.Schema({
   features:     [String],
   description:  String,
   order:        { type:Number, default:0 },
+  ptPlan:       { type:Boolean, default:false },
+  trainerId:    { type:String, default:'' },
+  maxStudents:  { type:Number, default:5 },
+  enrolledCount:{ type:Number, default:0 },
 }, { timestamps:true })
 
 const categorySchema = new mongoose.Schema({
@@ -206,16 +210,18 @@ const expenseSchema = new mongoose.Schema({
 }, { timestamps:true })
 
 const staffSchema = new mongoose.Schema({
-  _uid:      { type:String, default:uid, unique:true },
-  name:      String,
-  role:      String,
-  phone:     { type:String, default:'' },
-  email:     { type:String, default:'' },
-  salary:    { type:Number, default:0 },
-  joinDate:  String,
-  endDate:   { type:String, default:'' },
-  status:    { type:String, default:'Active' },
-  note:      { type:String, default:'' },
+  _uid:          { type:String, default:uid, unique:true },
+  name:          String,
+  role:          String,
+  phone:         { type:String, default:'' },
+  email:         { type:String, default:'' },
+  salary:        { type:Number, default:0 },      // legacy field
+  monthlySalary: { type:Number, default:0 },      // monthly salary amount
+  salaryDate:    { type:Number, default:1 },       // day of month salary is paid (1-28)
+  joinDate:      String,
+  endDate:       { type:String, default:'' },
+  status:        { type:String, default:'Active' },
+  note:          { type:String, default:'' },
 }, { timestamps:true })
 
 /* Models */
@@ -583,6 +589,10 @@ app.post('/api/verify-payment', paymentLimiter, async (req, res) => {
         email:memberEmail || '', plan:planStr,
         joined, endDate, status:'Active', fee:'Paid',
       })
+      // Increment enrolledCount for PT plans
+      if (meta?.planId) {
+        await Plan.findOneAndUpdate({ _uid: meta.planId }, { $inc: { enrolledCount: 1 } })
+      }
     }
   } catch(e) { console.error('Member auto-create error:', e.message) }
 
@@ -1361,6 +1371,53 @@ app.delete('/api/admin/subadmins/:id', mainAdminOnly, async (req, res) => {
 app.get('/api/admin/sub-admins', mainAdminOnly, async (_req, res) => {
   const docs = await SubAdmin.find({}).lean()
   res.json(docs.map(d => ({ id: d._id.toString(), username: d.username })))
+})
+
+/* ─── Salary Alert API (3-day advance warning) ─── */
+app.get('/api/admin/salary-alerts', mainAdminOnly, async (_req, res) => {
+  try {
+    const staff = await Staff.find({ status: 'Active' }).lean()
+    const now = new Date()
+    const today = now.getDate()
+    const alerts = []
+    for (const s of staff) {
+      if (!s.monthlySalary || !s.salaryDate) continue
+      const dueDay = Number(s.salaryDate)
+      // Days until salary: if dueDay >= today, it's this month; else next month
+      let daysUntil
+      if (dueDay >= today) {
+        daysUntil = dueDay - today
+      } else {
+        // Next month
+        const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, dueDay)
+        daysUntil = Math.ceil((nextMonth - now) / 86400000)
+      }
+      if (daysUntil <= 3) {
+        alerts.push({
+          id: s._uid,
+          name: s.name,
+          role: s.role || '',
+          monthlySalary: s.monthlySalary,
+          salaryDate: dueDay,
+          daysUntil,
+        })
+      }
+    }
+    res.json(alerts)
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
+
+/* ─── PT Plan enrollment cap check ─── */
+app.get('/api/plans/:id/enrollment', async (req, res) => {
+  try {
+    const plan = await Plan.findOne({ _uid: req.params.id }).lean()
+    if (!plan) return res.status(404).json({ error: 'Plan not found' })
+    res.json({
+      enrolledCount: plan.enrolledCount || 0,
+      maxStudents: plan.maxStudents || 5,
+      isFull: (plan.enrolledCount || 0) >= (plan.maxStudents || 5),
+    })
+  } catch(e) { res.status(500).json({ error: e.message }) }
 })
 
 /* ─── START ─── */
