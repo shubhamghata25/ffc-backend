@@ -237,6 +237,25 @@ const subAdminSchema = new mongoose.Schema({
 }, { timestamps:true })
 const SubAdmin = mongoose.model('SubAdmin', subAdminSchema)
 
+/* Settings schema — persists admin password hash across restarts */
+const settingsSchema = new mongoose.Schema({
+  key:   { type:String, required:true, unique:true },
+  value: { type:String, required:true },
+}, { timestamps:true })
+const Settings = mongoose.model('Settings', settingsSchema)
+
+/* Staff QR Attendance — 2 scans per day (morning 5am-11:59am, evening 4pm-10pm IST) */
+const staffAttendanceSchema = new mongoose.Schema({
+  _uid:      { type:String, default:uid, unique:true },
+  staffId:   { type:String, required:true },
+  staffName: { type:String, default:'' },
+  scanDate:  { type:String, required:true },   // YYYY-MM-DD IST
+  slot:      { type:String, required:true },   // 'morning' | 'evening'
+  time:      { type:String, default:'' },      // HH:MM IST
+}, { timestamps:true })
+staffAttendanceSchema.index({ staffId:1, scanDate:1, slot:1 }, { unique:true })
+const StaffAttendance = mongoose.model('StaffAttendance', staffAttendanceSchema)
+
 const Member      = mongoose.model('Member',      memberSchema)
 const Lead        = mongoose.model('Lead',         leadSchema)
 const Offer       = mongoose.model('Offer',        offerSchema)
@@ -459,6 +478,13 @@ async function startServer() {
   }
   await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 10000 })
   console.log('[OK] MongoDB connected')
+  // Load persisted admin password hash from DB (overrides env-based hash if set)
+  const savedHash = await Settings.findOne({ key: 'adminPasswordHash' }).lean()
+  if (savedHash && savedHash.value) {
+    adminCreds.passwordHash = savedHash.value
+    console.log('[OK] Admin password hash loaded from DB')
+  }
+  await refreshSubAdminsCache()
   await seedIfEmpty()
   app.listen(PORT, () => console.log(`[OK] FFC backend on port ${PORT}`))
 }
@@ -884,6 +910,95 @@ app.get('/api/kiosk/today-count', kioskOnly, async (_req, res) => {
   } catch { res.json({ count:0 }) }
 })
 
+/* ─── STAFF QR ATTENDANCE KIOSK ───────────────────────────────────────────────
+   Staff scan their QR code twice daily:
+     Morning slot: 5:00 AM – 11:59 AM IST
+     Evening slot: 4:00 PM – 10:00 PM IST
+   Each staff member can scan ONCE per slot per day.
+──────────────────────────────────────────────────────────────────────────── */
+app.post('/api/kiosk/staff-scan', kioskOnly, async (req, res) => {
+  try {
+    const { staffId } = req.body
+    if (!staffId || staffId.trim() === '') {
+      return res.json({ success:false, code:'INVALID', message:'Invalid QR code.' })
+    }
+
+    const staff = await Staff.findOne({ _uid: staffId.trim() })
+    if (!staff) {
+      return res.json({ success:false, code:'NOT_FOUND', message:'Staff member not found. Contact admin.' })
+    }
+    if (staff.status === 'Inactive') {
+      return res.json({ success:false, code:'INACTIVE', message:'Staff account is inactive.' })
+    }
+
+    // Get current IST time
+    const nowIST   = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Kolkata' }))
+    const hour     = nowIST.getHours()
+    const todayIST = new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata' })
+    const timeStr  = nowIST.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit' })
+
+    // Determine slot: morning 5:00-11:59, evening 16:00-22:00
+    let slot = null
+    if (hour >= 5 && hour < 12)  slot = 'morning'
+    if (hour >= 16 && hour < 22) slot = 'evening'
+
+    if (!slot) {
+      return res.json({
+        success: false,
+        code:    'OUT_OF_WINDOW',
+        staffName: staff.name,
+        message: 'Scan time is outside allowed windows.\nMorning: 5:00 AM – 12:00 PM\nEvening: 4:00 PM – 10:00 PM',
+      })
+    }
+
+    // Check already scanned this slot today
+    const already = await StaffAttendance.findOne({ staffId: staffId.trim(), scanDate: todayIST, slot })
+    if (already) {
+      return res.json({
+        success:   false,
+        code:      'ALREADY',
+        staffName: staff.name,
+        message:   `Already scanned for ${slot} at ${already.time}. Come back for the ${slot === 'morning' ? 'evening (4–10 PM)' : 'morning (5 AM–12 PM)'} window.`,
+      })
+    }
+
+    // Save staff attendance
+    await StaffAttendance.create({
+      _uid:      uid(),
+      staffId:   staffId.trim(),
+      staffName: staff.name,
+      scanDate:  todayIST,
+      slot,
+      time:      timeStr,
+    })
+
+    return res.json({
+      success:   true,
+      code:      'OK',
+      staffName: staff.name,
+      slot,
+      message:   `Welcome, ${staff.name}! ${slot === 'morning' ? '☀️ Morning' : '🌙 Evening'} check-in recorded at ${timeStr}.`,
+    })
+
+  } catch(e) {
+    if (e.code === 11000) {
+      return res.json({ success:false, code:'ALREADY', message:'Already scanned for this time slot today.' })
+    }
+    console.error('[ERROR] kiosk/staff-scan:', e.message)
+    return res.status(500).json({ success:false, code:'ERROR', message:'Server error. Try again.' })
+  }
+})
+
+// Admin: get staff attendance records
+app.get('/api/admin/staff-attendance', adminOnly, async (req, res) => {
+  try {
+    const { date } = req.query
+    const filter = date ? { scanDate: date } : {}
+    const records = await StaffAttendance.find(filter).sort('-createdAt').lean()
+    res.json(records)
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
+
 /* ─── DEBUG: Test if password works (remove after fixing) ─── */
 app.get('/api/admin/debug-auth', async (_req, res) => {
   const testPw = 'gym@admin123'
@@ -953,9 +1068,11 @@ app.post('/api/admin/change-password', adminOnly, async (req, res) => {
   if (newPassword.length < 8) return res.status(400).json({ error:'Min 8 characters' })
   const valid = await bcrypt.compare(currentPassword, adminCreds.passwordHash)
   if (!valid) return res.status(401).json({ error:'Current password is incorrect' })
-  adminCreds.passwordHash = await bcrypt.hash(newPassword, 12)
-  // NOTE: also update ADMIN_PASSWORD_HASH in Render env vars to persist across redeploys
-  res.json({ success:true, note:'Password changed for this session. Update ADMIN_PASSWORD_HASH in Render env vars to persist permanently.' })
+  const newHash = await bcrypt.hash(newPassword, 12)
+  adminCreds.passwordHash = newHash
+  // Persist to DB so it survives server restarts
+  await Settings.findOneAndUpdate({ key:'adminPasswordHash' }, { value:newHash }, { upsert:true, new:true })
+  res.json({ success:true, note:'Password changed and persisted to database.' })
 })
 
 /* ─── Members ─── */
