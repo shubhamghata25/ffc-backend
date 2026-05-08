@@ -493,7 +493,7 @@ function startKeepAlive() {
   const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`
   setInterval(async () => {
     try { await fetch(`${url}/api/health`); console.log('[PING] Keep-alive ping sent') } catch {}
-  }, 14 * 60 * 1000)
+  }, 10 * 60 * 1000)
 }
 
 /* ═══════════════════════════════════════════════════
