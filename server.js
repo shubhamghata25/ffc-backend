@@ -526,6 +526,21 @@ const reelSchema = new mongoose.Schema({
 }, { timestamps:true })
 const Reel = mongoose.model('Reel', reelSchema)
 
+/* ─── Post schema (daily quotes / posts) ─── */
+const postSchema = new mongoose.Schema({
+  _uid:     { type:String, default:uid, unique:true },
+  title:    { type:String, default:'' },
+  body:     { type:String, default:'' },
+  image:    { type:String, default:'' },  // base64 or URL
+  emoji:    { type:String, default:'' },
+  category: { type:String, default:'' },  // e.g. Motivation, Tip, Holiday
+  isQuote:  { type:Boolean, default:false },
+  author:   { type:String, default:'' },  // for quotes
+  active:   { type:Boolean, default:true },
+  order:    { type:Number, default:0 },
+}, { timestamps:true })
+const Post = mongoose.model('Post', postSchema)
+
 app.get('/api/gym-info', async (_req, res) => {
   try {
     const rec = await Settings.findOne({ key:'gymInfo' }).lean()
@@ -536,6 +551,11 @@ app.get('/api/gym-info', async (_req, res) => {
 
 app.get('/api/reels', async (_req, res) => {
   try { res.json(toArr(await Reel.find({ active:true }).sort('order'))) }
+  catch { res.json([]) }
+})
+
+app.get('/api/posts', async (_req, res) => {
+  try { res.json(toArr(await Post.find({ active:true }).sort('-createdAt'))) }
   catch { res.json([]) }
 })
 
@@ -1145,6 +1165,21 @@ app.put('/api/admin/reels/:id', adminOnly, async (req,res) => {
 })
 app.delete('/api/admin/reels/:id', adminOnly, async (req,res) => {
   try { await Reel.findOneAndDelete({_uid:req.params.id}); res.json({success:true}) }
+  catch(e){ res.status(400).json({error:e.message}) }
+})
+
+/* ─── Posts / Daily Quotes (all admins) ─── */
+app.get('/api/admin/posts',    adminOnly, async (_req,res) => { try{ res.json(toArr(await Post.find().sort('-createdAt'))) }catch{ res.json([]) } })
+app.post('/api/admin/posts',   adminOnly, async (req,res) => {
+  try { const p=await Post.create({...req.body,_uid:uid()}); res.json(toObj(p)) }
+  catch(e){ res.status(400).json({error:e.message}) }
+})
+app.put('/api/admin/posts/:id', adminOnly, async (req,res) => {
+  try { const p=await Post.findOneAndUpdate({_uid:req.params.id},{...req.body},{new:true}); res.json(toObj(p)) }
+  catch(e){ res.status(400).json({error:e.message}) }
+})
+app.delete('/api/admin/posts/:id', adminOnly, async (req,res) => {
+  try { await Post.findOneAndDelete({_uid:req.params.id}); res.json({success:true}) }
   catch(e){ res.status(400).json({error:e.message}) }
 })
 
