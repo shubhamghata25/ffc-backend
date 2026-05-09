@@ -513,7 +513,18 @@ const GYM_INFO_DEFAULT = {
   eveningClose:  '10:00 PM',
   days:          'Monday – Saturday',
   holiday:       'Closed on Sunday',
+  notice:        '',
 }
+
+/* ─── Reels schema ─── */
+const reelSchema = new mongoose.Schema({
+  _uid:    { type:String, default:uid, unique:true },
+  url:     { type:String, required:true },  // Instagram post URL or YouTube URL
+  caption: { type:String, default:'' },
+  order:   { type:Number, default:0 },
+  active:  { type:Boolean, default:true },
+}, { timestamps:true })
+const Reel = mongoose.model('Reel', reelSchema)
 
 app.get('/api/gym-info', async (_req, res) => {
   try {
@@ -521,6 +532,11 @@ app.get('/api/gym-info', async (_req, res) => {
     const info = rec ? JSON.parse(rec.value) : GYM_INFO_DEFAULT
     res.json({ ...GYM_INFO_DEFAULT, ...info })
   } catch { res.json(GYM_INFO_DEFAULT) }
+})
+
+app.get('/api/reels', async (_req, res) => {
+  try { res.json(toArr(await Reel.find({ active:true }).sort('order'))) }
+  catch { res.json([]) }
 })
 
 app.get('/api/offer', async (_req, res) => {
@@ -1115,6 +1131,21 @@ app.post('/api/admin/gym-info', adminOnly, async (req, res) => {
     )
     res.json({ success:true })
   } catch(e) { res.status(500).json({ error:e.message }) }
+})
+
+/* ─── Reels (main admin only) ─── */
+app.get('/api/admin/reels',    adminOnly, async (_req,res) => { try{ res.json(toArr(await Reel.find().sort('order'))) }catch{ res.json([]) } })
+app.post('/api/admin/reels',   adminOnly, async (req,res) => {
+  try { const r=await Reel.create({...req.body,_uid:uid()}); res.json(toObj(r)) }
+  catch(e){ res.status(400).json({error:e.message}) }
+})
+app.put('/api/admin/reels/:id', adminOnly, async (req,res) => {
+  try { const r=await Reel.findOneAndUpdate({_uid:req.params.id},{...req.body},{new:true}); res.json(toObj(r)) }
+  catch(e){ res.status(400).json({error:e.message}) }
+})
+app.delete('/api/admin/reels/:id', adminOnly, async (req,res) => {
+  try { await Reel.findOneAndDelete({_uid:req.params.id}); res.json({success:true}) }
+  catch(e){ res.status(400).json({error:e.message}) }
 })
 
 /* ─── Members ─── */
