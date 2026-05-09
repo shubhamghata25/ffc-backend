@@ -502,6 +502,27 @@ function startKeepAlive() {
 
 app.get('/api/health', (_req, res) => res.json({ status:'ok', time:new Date().toISOString() }))
 
+const GYM_INFO_DEFAULT = {
+  gymName:       'Friends Fitness Club',
+  phone:         '+91 84848 05154',
+  email:         'friendsfitnessclub18@gmail.com',
+  address:       'RT Complex, 2nd Floor, Wardhaman Nagar, Nagpur',
+  morningOpen:   '5:00 AM',
+  morningClose:  '11:00 AM',
+  eveningOpen:   '4:30 PM',
+  eveningClose:  '10:00 PM',
+  days:          'Monday – Saturday',
+  holiday:       'Closed on Sunday',
+}
+
+app.get('/api/gym-info', async (_req, res) => {
+  try {
+    const rec = await Settings.findOne({ key:'gymInfo' }).lean()
+    const info = rec ? JSON.parse(rec.value) : GYM_INFO_DEFAULT
+    res.json({ ...GYM_INFO_DEFAULT, ...info })
+  } catch { res.json(GYM_INFO_DEFAULT) }
+})
+
 app.get('/api/offer', async (_req, res) => {
   try {
     const o = await Offer.findOne({ status:'ON' })
@@ -1073,6 +1094,27 @@ app.post('/api/admin/change-password', adminOnly, async (req, res) => {
   // Persist to DB so it survives server restarts
   await Settings.findOneAndUpdate({ key:'adminPasswordHash' }, { value:newHash }, { upsert:true, new:true })
   res.json({ success:true, note:'Password changed and persisted to database.' })
+})
+
+/* ─── Gym Info ─── */
+app.get('/api/admin/gym-info', adminOnly, async (_req, res) => {
+  try {
+    const rec = await Settings.findOne({ key:'gymInfo' }).lean()
+    const info = rec ? JSON.parse(rec.value) : {}
+    res.json(info)
+  } catch { res.json({}) }
+})
+
+app.post('/api/admin/gym-info', adminOnly, async (req, res) => {
+  try {
+    const info = req.body
+    await Settings.findOneAndUpdate(
+      { key:'gymInfo' },
+      { value: JSON.stringify(info) },
+      { upsert:true, new:true }
+    )
+    res.json({ success:true })
+  } catch(e) { res.status(500).json({ error:e.message }) }
 })
 
 /* ─── Members ─── */
