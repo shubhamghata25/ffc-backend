@@ -555,6 +555,27 @@ const postSchema = new mongoose.Schema({
 }, { timestamps:true })
 const Post = mongoose.model('Post', postSchema)
 
+/* ─── Gym Logo (public GET, admin POST) ─── */
+app.get('/api/gym-logo', async (_req, res) => {
+  try {
+    const rec = await Settings.findOne({ key:'gymLogo' }).lean()
+    res.json({ logo: rec ? rec.value : '' })
+  } catch { res.json({ logo:'' }) }
+})
+
+app.post('/api/admin/gym-logo', adminOnly, async (req, res) => {
+  try {
+    const { logo } = req.body
+    if (!logo && logo !== '') return res.status(400).json({ error:'logo field required' })
+    await Settings.findOneAndUpdate(
+      { key:'gymLogo' },
+      { value: logo },
+      { upsert:true, new:true }
+    )
+    res.json({ success:true })
+  } catch(e) { res.status(500).json({ error:e.message }) }
+})
+
 app.get('/api/gym-info', async (_req, res) => {
   try {
     const rec = await Settings.findOne({ key:'gymInfo' }).lean()
@@ -684,11 +705,22 @@ app.post('/api/verify-payment', paymentLimiter, async (req, res) => {
   try {
     const { memberName, memberEmail, memberPhone, planLabel, planPeriod, planPrice } = meta || {}
     if (memberName && memberPhone) {
-      const today  = new Date()
-      const joined = today.toISOString().slice(0, 10)
-      const DAYS   = { month:30, '3 months':91, '6 months':182, year:365, day:1 }
-      const days   = DAYS[planPeriod] || 30
-      const endDate = new Date(today.getTime() + days * 86400000).toISOString().slice(0, 10)
+      // Use member-chosen joining date if provided, else today
+      const joinBase = (meta && meta.joiningDate && /^\d{4}-\d{2}-\d{2}$/.test(meta.joiningDate))
+        ? new Date(meta.joiningDate + 'T00:00:00+05:30')
+        : new Date()
+      const joined  = joinBase.toISOString().slice(0, 10)
+      const DAYS = {
+        'day':1, '1 day':1, 'daily':1,
+        'week':7, '1 week':7, 'weekly':7,
+        'month':30, '1 month':30, 'monthly':30,
+        '3 months':91, '3month':91, '3months':91, 'quarter':91, 'quarterly':91,
+        '6 months':182, '6month':182, '6months':182, 'half yearly':182, 'half year':182,
+        'year':365, '1 year':365, 'yearly':365, 'annual':365,
+      }
+      const periodKey = (planPeriod || '').toLowerCase().trim()
+      const days   = (DAYS[periodKey] !== undefined) ? DAYS[periodKey] : 30
+      const endDate = new Date(joinBase.getTime() + days * 86400000).toISOString().slice(0, 10)
       const planStr = planLabel && planPrice ? planLabel + ' - Rs.' + planPrice : (planLabel || 'Monthly')
 
       newMember = await Member.create({
