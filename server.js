@@ -518,11 +518,12 @@ const GYM_INFO_DEFAULT = {
 
 /* ─── Reels schema ─── */
 const reelSchema = new mongoose.Schema({
-  _uid:    { type:String, default:uid, unique:true },
-  url:     { type:String, required:true },  // Instagram post URL or YouTube URL
-  caption: { type:String, default:'' },
-  order:   { type:Number, default:0 },
-  active:  { type:Boolean, default:true },
+  _uid:      { type:String, default:uid, unique:true },
+  url:       { type:String, required:true },
+  thumbnail: { type:String, default:'' },  // screenshot for Instagram reels
+  caption:   { type:String, default:'' },
+  order:     { type:Number, default:0 },
+  active:    { type:Boolean, default:true },
 }, { timestamps:true })
 const Reel = mongoose.model('Reel', reelSchema)
 
