@@ -264,7 +264,16 @@ const Plan        = mongoose.model('Plan',         planSchema)
 const Category    = mongoose.model('Category',     categorySchema)
 const Subcategory = mongoose.model('Subcategory',  subcategorySchema)
 const Product     = mongoose.model('Product',      productSchema)
+
+const workoutPlanSchema = new mongoose.Schema({
+  _uid:        { type:String, default:uid, unique:true },
+  name:        String,
+  level:       String,
+  description: String,
+  exercises:   { type:mongoose.Schema.Types.Mixed, default:[] },
+}, { timestamps:true })
 const Exercise    = mongoose.model('Exercise',     exerciseSchema)
+const WorkoutPlan = mongoose.model('WorkoutPlan', workoutPlanSchema)
 const Order       = mongoose.model('Order',        orderSchema)
 const Attendance  = mongoose.model('Attendance',   attendanceSchema)
 const Expense     = mongoose.model('Expense',      expenseSchema)
@@ -1381,6 +1390,10 @@ app.get('/api/admin/exercises',        adminOnly, async (_req,res) => { try{ res
 app.post('/api/admin/exercises',       adminOnly, async (req,res) => { try{ const e=await Exercise.create({...req.body,_uid:uid()}); res.json(toObj(e)) }catch(e){ res.status(500).json({error:e.message}) } })
 app.put('/api/admin/exercises/:id',    adminOnly, async (req,res) => { try{ await Exercise.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 app.delete('/api/admin/exercises/:id', adminOnly, async (req,res) => { try{ await Exercise.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
+app.get('/api/admin/workout-plans',        adminOnly, async (_req,res) => { try{ res.json(toArr(await WorkoutPlan.find())) }catch{ res.json([]) } })
+app.post('/api/admin/workout-plans',       adminOnly, async (req,res) => { try{ const p=await WorkoutPlan.create({...req.body,_uid:uid()}); res.json(toObj(p)) }catch(e){ res.status(500).json({error:e.message}) } })
+app.put('/api/admin/workout-plans/:id',    adminOnly, async (req,res) => { try{ await WorkoutPlan.findOneAndUpdate({_uid:req.params.id},{...req.body},{new:true}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
+app.delete('/api/admin/workout-plans/:id', adminOnly, async (req,res) => { try{ await WorkoutPlan.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
 /* ─── Attendance ─── */
 app.post('/api/admin/attendance/scan', adminOnly, async (req, res) => {
