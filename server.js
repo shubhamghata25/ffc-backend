@@ -605,6 +605,10 @@ app.get('/api/exercises', async (_req, res) => {
   } catch { res.json([]) }
 })
 
+app.get('/api/workout-plans', async (_req, res) => {
+  try { res.json(toArr(await WorkoutPlan.find())) } catch { res.json([]) }
+})
+
 app.get('/api/products', async (_req, res) => {
   try {
     const prods = await Product.find({ inStock:true })
