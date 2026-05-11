@@ -1349,7 +1349,42 @@ app.post('/api/admin/members', adminOnly, async (req, res) => {
 app.put('/api/admin/members/:id',    adminOnly, async (req,res) => { try{ await Member.findOneAndUpdate({_uid:req.params.id},{...req.body}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 app.delete('/api/admin/members/:id', adminOnly, async (req,res) => { try{ await Member.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
-/* ─── Leads ─── */
+/* ─── Partial Payment ─── */
+app.post('/api/admin/members/:id/partial-payment', adminOnly, async (req, res) => {
+  try {
+    const member = await Member.findOne({ _uid: req.params.id })
+    if (!member) return res.status(404).json({ error: 'Member not found' })
+    const { amount, nextPaymentDate } = req.body
+    const paid = Number(amount) || 0
+    const currentRemaining = Number(member.remainingAmount) || 0
+    const newRemaining = Math.max(0, currentRemaining - paid)
+    const update = {
+      paidAmount: (Number(member.paidAmount) || 0) + paid,
+      remainingAmount: newRemaining,
+      nextPaymentDate: newRemaining > 0 ? (nextPaymentDate || member.nextPaymentDate || '') : '',
+      fee: newRemaining <= 0 ? 'Paid' : 'Partial'
+    }
+    await Member.findOneAndUpdate({ _uid: req.params.id }, update)
+    res.json({ ok: true, remainingAmount: newRemaining, fee: update.fee })
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
+
+/* ─── Extend Membership (main admin only) ─── */
+app.post('/api/admin/members/:id/extend', mainAdminOnly, async (req, res) => {
+  try {
+    const { newEndDate, note } = req.body
+    if (!newEndDate) return res.status(400).json({ error: 'newEndDate required' })
+    await Member.findOneAndUpdate({ _uid: req.params.id }, {
+      endDate: newEndDate,
+      status: 'Active',
+      graceNote: note || '',
+      graceExtended: true
+    })
+    res.json({ ok: true })
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
+
+
 app.get('/api/admin/leads',          adminOnly, async (_req,res) => { try{ res.json(toArr(await Lead.find().sort('-createdAt'))) }catch{ res.json([]) } })
 app.delete('/api/admin/leads/:id',   adminOnly, async (req,res) => { try{ await Lead.findOneAndDelete({_uid:req.params.id}); res.json({ok:true}) }catch(e){ res.status(500).json({error:e.message}) } })
 
