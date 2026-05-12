@@ -102,6 +102,14 @@ const memberSchema = new mongoose.Schema({
   joined:        String, status:String, fee:String,
   endDate:       { type:String, default:'' },   // scan deadline (paid days run out)
   email:         { type:String, default:'' },
+  address:       { type:String, default:'' },   // member address
+  // Partial payment fields
+  paidAmount:     { type:Number, default:0 },
+  remainingAmount:{ type:Number, default:0 },
+  nextPaymentDate:{ type:String, default:'' },
+  // Grace / membership extension fields
+  graceNote:      { type:String, default:'' },
+  graceExtended:  { type:Boolean, default:false },
   // Personal Trainer Plan fields
   ptPlan:        { type:Boolean, default:false }, // is this a PT plan?
   scanDays:      { type:Number, default:0 },      // total QR scan days allowed
