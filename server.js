@@ -676,7 +676,7 @@ app.put('/api/admin/payment-settings', mainAdminOnly, async (req, res) => {
     const { razorpay, phonepe, gymcash, whatsapp, waNumber } = req.body
     let ps = await PaymentSettings.findOne()
     if (!ps) ps = await PaymentSettings.create({})
-    await PaymentSettings.findByIdAndUpdate(ps._id, { razorpay:!!razorpay, phonepe:!!phonepe, gymcash:!!gymcash, whatsapp:!!whatsapp, waNumber:waNumber||ps.waNumber })
+    await PaymentSettings.findByIdAndUpdate(ps._id, { $set: { razorpay:!!razorpay, phonepe:!!phonepe, gymcash:!!gymcash, whatsapp:!!whatsapp, waNumber:waNumber||ps.waNumber } }, { new:true })
     res.json({ ok:true })
   } catch(e) { res.status(500).json({ error:e.message }) }
 })
