@@ -632,6 +632,56 @@ app.get('/api/store', async (_req, res) => {
   } catch { res.json({ categories:[], subcategories:[], products:[] }) }
 })
 
+/* ─── Gym (cash) Store Orders ─── */
+app.post('/api/store/gym-order', async (req, res) => {
+  try {
+    const {
+      customerName, customerPhone, customerEmail, address,
+      productName, productPrice, itemId,
+      items, totalAmount, description,
+      type,
+    } = req.body
+
+    if (!customerName || !customerPhone)
+      return res.status(400).json({ error: 'Name and phone are required' })
+
+    const meta = {
+      type:          'gym_purchase',
+      customerName,
+      customerPhone,
+      customerEmail: customerEmail || '',
+      address:       address || '',
+      ...(items
+        ? { items, totalAmount, description }
+        : { productName, productPrice, itemId }),
+    }
+
+    const order = await Order.create({
+      _uid:      uid(),
+      orderId:   'GYM-' + Date.now(),
+      paymentId: '',
+      status:    'pending_cash',
+      meta,
+    })
+
+    // SMS notification to gym owner
+    try {
+      const itemDesc = items
+        ? `cart (Rs.${totalAmount})`
+        : `${productName} (Rs.${productPrice})`
+      await sendSMS(
+        process.env.ADMIN_PHONE || '',
+        `FFC Store [GYM ORDER]: ${customerName} (${customerPhone}) wants to buy ${itemDesc} at the counter.`
+      )
+    } catch(e) { console.warn('SMS failed:', e.message) }
+
+    res.json({ ok: true, orderId: order._uid || order.id })
+  } catch(e) {
+    console.error('[ERROR] gym-order:', e.message)
+    res.status(500).json({ error: 'Could not save gym order' })
+  }
+})
+
 app.get('/api/exercises', async (_req, res) => {
   try {
     const exs = await Exercise.find()
